@@ -19,6 +19,9 @@ libloragw: libtools
 packet_forwarder: libloragw
 	$(MAKE) all -e -C $@
 
+clusterduck: libloragw
+	$(MAKE) all -e -C $@
+
 util_net_downlink: libtools
 	$(MAKE) all -e -C $@
 
