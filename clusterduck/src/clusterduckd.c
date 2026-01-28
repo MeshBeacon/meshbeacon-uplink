@@ -56,7 +56,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include "loragw_aux.h"
 #include "loragw_reg.h"
 #include "loragw_gps.h"
-#include "duck_bridge.h"   // add this near the other includes; ensure the compiler include path finds it
+#include "radio/duck_bridge.h"   // add this near the other includes; ensure the compiler include path finds it
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE MACROS ------------------------------------------------------- */
