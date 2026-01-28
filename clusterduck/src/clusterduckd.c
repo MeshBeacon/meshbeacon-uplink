@@ -79,7 +79,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #define CDPCFG_RF_LORA_SF 7
 #endif
 #ifndef CDPCFG_RF_LORA_TXPOW
-#define CDPCFG_RF_LORA_TXPOW 14
+#define CDPCFG_RF_LORA_TXPOW 10
 #endif
 #ifndef CDPCFG_RF_LORA_GAIN
 #define CDPCFG_RF_LORA_GAIN 0
