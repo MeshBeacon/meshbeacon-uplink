@@ -67,6 +67,24 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 
 #define RAND_RANGE(min, max) (rand() % (max + 1 - min) + min)
 
+/* CDP default radio parameters (from cdpcfg.h).
+   If cdpcfg.h is not available in this build context, use these constants. */
+#ifndef CDPCFG_RF_LORA_FREQ_HZ
+#define CDPCFG_RF_LORA_FREQ_HZ 923000000U
+#endif
+#ifndef CDPCFG_RF_LORA_BW
+#define CDPCFG_RF_LORA_BW 125.0f
+#endif
+#ifndef CDPCFG_RF_LORA_SF
+#define CDPCFG_RF_LORA_SF 7
+#endif
+#ifndef CDPCFG_RF_LORA_TXPOW
+#define CDPCFG_RF_LORA_TXPOW 14
+#endif
+#ifndef CDPCFG_RF_LORA_GAIN
+#define CDPCFG_RF_LORA_GAIN 0
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE CONSTANTS ---------------------------------------------------- */
 
@@ -2239,73 +2257,7 @@ void thread_down(void) {
     uint8_t dl_sf = 0;
     uint8_t dl_cr = 0;
     uint8_t dl_rf_chain = 0;
-
-    /* Try to pop a downlink from ClusterDuck */
-    int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
-                                    &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
-                                    &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
-
-    if (duck_rc == 0) {
-        /* buf_capacity now holds actual downlink payload size */
-        if (buf_capacity == 0) {
-            // buffer too small; allocate larger buffer or handle error
-        } else {
-            /* Build lgw_pkt_tx_s - field names vary by HAL version */
-            struct lgw_pkt_tx_s txpkt;
-            memset(&txpkt, 0, sizeof(txpkt));
-
-            /* Copy payload */
-            memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
-            txpkt.size = buf_capacity;
-
-            /* Frequency and timestamp */
-            txpkt.freq_hz = dl_freq_hz;
-
-            /* Scheduling: choose TIMESTAMPED vs IMMEDIATE depending on dl_tmst and forwarder expectations.
-               Many forwarders expect a timestamp in txpkt.count_us (or txpkt.tmst). Use the same field name your code uses. */
-            txpkt.count_us = dl_tmst;    /* change to txpkt.tmst if your code uses tmst */
-
-            /* Choose tx_mode:
-               - IMMEDIATE: send as soon as possible
-               - TIMESTAMPED: send at provided timestamp (count_us/tmst)
-               Replace IMMEDIATE/TIMESTAMPED with the constants used in your lora_pkt_fwd code. */
-            txpkt.tx_mode = TIMESTAMPED; // or IMMEDIATE
-
-            /* RF chain and power */
-            txpkt.rf_chain = dl_rf_chain;     // or set to an appropriate chain
-            txpkt.rf_power = dl_tx_power_dbm; // verify units expected by HAL
-
-            /* Modulation params — update mapping to your HAL struct */
-            // Example for LoRa:
-            txpkt.modulation = MOD_LORA;     // ensure these enums exist in your build
-            //txpkt.datarate = dl_sf;          // some HALs expect a special enum; adjust
-	    txpkt.datarate = DR_LORA_SF12;
-            txpkt.bandwidth = BW_125KHZ;      // may need mapping to a bandwidth enum
-            txpkt.coderate = CR_LORA_4_5;
-
-            /* Enqueue or transmit:
-               The function to trigger tx is often lgw_tx(&txpkt) or a local wrapper. Use the one used by your forwarder. */
-            if (lgw_send(&txpkt) != LGW_HAL_SUCCESS) {
-                // handle tx fail (log / drop)
-            } else {
-                // success: optionally log
-            }
-        }
-    }
     /* End of Zaihan's code */
-
-    /* set downstream socket RX timeout */
-    i = setsockopt(sock_down, SOL_SOCKET, SO_RCVTIMEO, (void *)&pull_timeout, sizeof pull_timeout);
-    if (i != 0) {
-        MSG("ERROR: [down] setsockopt returned %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
-
-    /* pre-fill the pull request buffer with fixed fields */
-    buff_req[0] = PROTOCOL_VERSION;
-    buff_req[3] = PKT_PULL_DATA;
-    *(uint32_t *)(buff_req + 4) = net_mac_h;
-    *(uint32_t *)(buff_req + 8) = net_mac_l;
 
     /* beacon variables initialization */
     last_beacon_gps_time.tv_sec = 0;
@@ -2555,38 +2507,33 @@ void thread_down(void) {
                     // buffer too small; allocate larger buffer or handle error
                 } else {
                     /* Build lgw_pkt_tx_s - field names vary by HAL version */
-                    struct lgw_pkt_tx_s txpkt;
                     memset(&txpkt, 0, sizeof(txpkt));
 
                     /* Copy payload */
                     memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
                     txpkt.size = buf_capacity;
 
-                    /* Frequency and timestamp */
-                    txpkt.freq_hz = dl_freq_hz;
+                    /* Frequency and timestamp (fallback to CDP defaults if not provided) */
+                    txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
+                    txpkt.count_us = dl_tmst;
 
-                    /* Scheduling: choose TIMESTAMPED vs IMMEDIATE depending on dl_tmst and forwarder expectations.
-                       Many forwarders expect a timestamp in txpkt.count_us (or txpkt.tmst). Use the same field name your code uses. */
-                    txpkt.count_us = dl_tmst;    /* change to txpkt.tmst if your code uses tmst */
-
-                    /* Choose tx_mode:
-                       - IMMEDIATE: send as soon as possible
-                       - TIMESTAMPED: send at provided timestamp (count_us/tmst)
-                       Replace IMMEDIATE/TIMESTAMPED with the constants used in your lora_pkt_fwd code. */
-                    txpkt.tx_mode = TIMESTAMPED; // or IMMEDIATE
+                    /* Choose tx_mode */
+                    txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
 
                     /* RF chain and power */
-                    txpkt.rf_chain = dl_rf_chain;     // or set to an appropriate chain
-                    txpkt.rf_power = dl_tx_power_dbm; // verify units expected by HAL
+                    txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
+                    txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
 
-                    /* Modulation params — update mapping to your HAL struct */
-                    // Example for LoRa:
-                    txpkt.modulation = MOD_LORA;     // ensure these enums exist in your build
-                    txpkt.datarate = DR_LORA_SF12;
-                    txpkt.bandwidth = BW_125KHZ;      // may need mapping to a bandwidth enum
-                    txpkt.coderate = CR_LORA_4_5;
+                    /* Modulation params — LoRa defaults mapped from CDP config if not provided */
+                    txpkt.modulation = MOD_LORA;
+                    txpkt.bandwidth  = BW_125KHZ;
+                    txpkt.datarate   = DR_LORA_SF7;
+                    txpkt.coderate   = CR_LORA_4_5;
                 }
             }
+
+            downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
+
             /* End of Zaihan's code */
 
             /* record measurement data */
@@ -2599,16 +2546,6 @@ void thread_down(void) {
             /* reset error/warning results */
             jit_result = warning_result = JIT_ERROR_OK;
             warning_value = 0;
-
-	    // Various FIXMEs TODO
-	    
-	    /* FIXME: enumerate proper txpkt.freq_hz, 
-	      txpkt.freq_hz = (uint32_t)((double)(1.0e6) * json_value_get_number(val));
-	    */
-
-            // FIXME: use proper txpkt.rfchain
-
-	    // FIXME: use proper txpkt.rfpower
 
             /* check TX frequency before trying to queue packet */
             if ((txpkt.freq_hz < tx_freq_min[txpkt.rf_chain]) || (txpkt.freq_hz > tx_freq_max[txpkt.rf_chain])) {
@@ -2627,8 +2564,6 @@ void thread_down(void) {
                     txpkt.rf_power = txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
                 }
             }
-
-            downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
 
             /* insert packet to be sent into JIT queue */
             if (jit_result == JIT_ERROR_OK) {
