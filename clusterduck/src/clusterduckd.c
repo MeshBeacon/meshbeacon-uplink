@@ -2123,77 +2123,6 @@ void thread_up(void) {
                                freq_hz, tmst, rf_chain,
                                bandwidth_hz, datarate_sf, coderate);
 
-        /* restart fetch sequence without sending empty JSON if all packets have been filtered out */
-        if (pkt_in_dgram == 0) {
-            if (send_report == true) {
-                /* need to clean up the beginning of the payload */
-                buff_index -= 8; /* removes "rxpk":[ */
-            } else {
-                /* all packet have been filtered out and no report, restart loop */
-                continue;
-            }
-        } else {
-            /* end of packet array */
-            buff_up[buff_index] = ']';
-            ++buff_index;
-            /* add separator if needed */
-            if (send_report == true) {
-                buff_up[buff_index] = ',';
-                ++buff_index;
-            }
-        }
-
-        /* add status report if a new one is available */
-        if (send_report == true) {
-            pthread_mutex_lock(&mx_stat_rep);
-            report_ready = false;
-            j = snprintf((char *)(buff_up + buff_index), TX_BUFF_SIZE-buff_index, "%s", status_report);
-            pthread_mutex_unlock(&mx_stat_rep);
-            if (j > 0) {
-                buff_index += j;
-            } else {
-                MSG("ERROR: [up] snprintf failed line %u\n", (__LINE__ - 5));
-                exit(EXIT_FAILURE);
-            }
-        }
-
-        /* end of JSON datagram payload */
-        buff_up[buff_index] = '}';
-        ++buff_index;
-        buff_up[buff_index] = 0; /* add string terminator, for safety */
-
-        printf("\nJSON up: %s\n", (char *)(buff_up + 12)); /* DEBUG: display JSON payload */
-
-        /* send datagram to server */
-        send(sock_up, (void *)buff_up, buff_index, 0);
-        clock_gettime(CLOCK_MONOTONIC, &send_time);
-        pthread_mutex_lock(&mx_meas_up);
-        meas_up_dgram_sent += 1;
-        meas_up_network_byte += buff_index;
-
-        /* wait for acknowledge (in 2 times, to catch extra packets) */
-        for (i=0; i<2; ++i) {
-            j = recv(sock_up, (void *)buff_ack, sizeof buff_ack, 0);
-            clock_gettime(CLOCK_MONOTONIC, &recv_time);
-            if (j == -1) {
-                if (errno == EAGAIN) { /* timeout */
-                    continue;
-                } else { /* server connection error */
-                    break;
-                }
-            } else if ((j < 4) || (buff_ack[0] != PROTOCOL_VERSION) || (buff_ack[3] != PKT_PUSH_ACK)) {
-                //MSG("WARNING: [up] ignored invalid non-ACL packet\n");
-                continue;
-            } else if ((buff_ack[1] != token_h) || (buff_ack[2] != token_l)) {
-                //MSG("WARNING: [up] ignored out-of sync ACK packet\n");
-                continue;
-            } else {
-                MSG("INFO: [up] PUSH_ACK received in %i ms\n", (int)(1000 * difftimespec(recv_time, send_time)));
-                meas_up_ack_rcv += 1;
-                break;
-            }
-        }
-        pthread_mutex_unlock(&mx_meas_up);
     }
     MSG("\nINFO: End of upstream thread\n");
 }
@@ -2266,9 +2195,6 @@ void thread_down(void) {
     JSON_Object *txpk_obj = NULL;
     JSON_Value *val = NULL; /* needed to detect the absence of some fields */
     const char *str; /* pointer to sub-strings in the JSON data */
-    short x0, x1;
-    uint64_t x2;
-    double x3, x4;
 
     /* variables to send on GPS timestamp */
     struct tref local_ref; /* time reference used for GPS <-> timestamp conversion */
@@ -2352,9 +2278,10 @@ void thread_down(void) {
             /* Modulation params — update mapping to your HAL struct */
             // Example for LoRa:
             txpkt.modulation = MOD_LORA;     // ensure these enums exist in your build
-            txpkt.datarate = dl_sf;          // some HALs expect a special enum; adjust
-            txpkt.bandwidth = dl_bw_hz;      // may need mapping to a bandwidth enum
-            txpkt.coderate = dl_cr;
+            //txpkt.datarate = dl_sf;          // some HALs expect a special enum; adjust
+	    txpkt.datarate = DR_LORA_SF12;
+            txpkt.bandwidth = BW_125KHZ;      // may need mapping to a bandwidth enum
+            txpkt.coderate = CR_LORA_4_5;
 
             /* Enqueue or transmit:
                The function to trigger tx is often lgw_tx(&txpkt) or a local wrapper. Use the one used by your forwarder. */
@@ -2617,327 +2544,50 @@ void thread_down(void) {
                 }
             }
 
-            /* if no network message was received, got back to listening sock_down socket */
-            if (msg_len == -1) {
-                //MSG("WARNING: [down] recv returned %s\n", strerror(errno)); /* too verbose */
-                continue;
-            }
+            /* Try to pop a downlink from ClusterDuck */
+            int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
+                                            &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
+                                            &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
-            /* if the datagram does not respect protocol, just ignore it */
-            if ((msg_len < 4) || (buff_down[0] != PROTOCOL_VERSION) || ((buff_down[3] != PKT_PULL_RESP) && (buff_down[3] != PKT_PULL_ACK))) {
-                MSG("WARNING: [down] ignoring invalid packet len=%d, protocol_version=%d, id=%d\n",
-                        msg_len, buff_down[0], buff_down[3]);
-                continue;
-            }
-
-            /* if the datagram is an ACK, check token */
-            if (buff_down[3] == PKT_PULL_ACK) {
-                if ((buff_down[1] == token_h) && (buff_down[2] == token_l)) {
-                    if (req_ack) {
-                        MSG("INFO: [down] duplicate ACK received :)\n");
-                    } else { /* if that packet was not already acknowledged */
-                        req_ack = true;
-                        autoquit_cnt = 0;
-                        pthread_mutex_lock(&mx_meas_dw);
-                        meas_dw_ack_rcv += 1;
-                        pthread_mutex_unlock(&mx_meas_dw);
-                        MSG("INFO: [down] PULL_ACK received in %i ms\n", (int)(1000 * difftimespec(recv_time, send_time)));
-                    }
-                } else { /* out-of-sync token */
-                    MSG("INFO: [down] received out-of-sync ACK\n");
-                }
-                continue;
-            }
-
-            /* the datagram is a PULL_RESP */
-            buff_down[msg_len] = 0; /* add string terminator, just to be safe */
-            MSG("INFO: [down] PULL_RESP received  - token[%d:%d] :)\n", buff_down[1], buff_down[2]); /* very verbose */
-            printf("\nJSON down: %s\n", (char *)(buff_down + 4)); /* DEBUG: display JSON payload */
-
-            /* initialize TX struct and try to parse JSON */
-            memset(&txpkt, 0, sizeof txpkt);
-            root_val = json_parse_string_with_comments((const char *)(buff_down + 4)); /* JSON offset */
-            if (root_val == NULL) {
-                MSG("WARNING: [down] invalid JSON, TX aborted\n");
-                continue;
-            }
-
-            /* look for JSON sub-object 'txpk' */
-            txpk_obj = json_object_get_object(json_value_get_object(root_val), "txpk");
-            if (txpk_obj == NULL) {
-                MSG("WARNING: [down] no \"txpk\" object in JSON, TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-
-            /* Parse "immediate" tag, or target timestamp, or UTC time to be converted by GPS (mandatory) */
-            i = json_object_get_boolean(txpk_obj,"imme"); /* can be 1 if true, 0 if false, or -1 if not a JSON boolean */
-            if (i == 1) {
-                /* TX procedure: send immediately */
-                sent_immediate = true;
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
-                MSG("INFO: [down] a packet will be sent in \"immediate\" mode\n");
-            } else {
-                sent_immediate = false;
-                val = json_object_get_value(txpk_obj,"tmst");
-                if (val != NULL) {
-                    /* TX procedure: send on timestamp value */
-                    txpkt.count_us = (uint32_t)json_value_get_number(val);
-
-                    /* Concentrator timestamp is given, we consider it is a Class A downlink */
-                    downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_A;
+            if (duck_rc == 0) {
+                /* buf_capacity now holds actual downlink payload size */
+                if (buf_capacity == 0) {
+                    // buffer too small; allocate larger buffer or handle error
                 } else {
-                    /* TX procedure: send on GPS time (converted to timestamp value) */
-                    val = json_object_get_value(txpk_obj, "tmms");
-                    if (val == NULL) {
-                        MSG("WARNING: [down] no mandatory \"txpk.tmst\" or \"txpk.tmms\" objects in JSON, TX aborted\n");
-                        json_value_free(root_val);
-                        continue;
-                    }
-                    if (gps_enabled == true) {
-                        pthread_mutex_lock(&mx_timeref);
-                        if (gps_ref_valid == true) {
-                            local_ref = time_reference_gps;
-                            pthread_mutex_unlock(&mx_timeref);
-                        } else {
-                            pthread_mutex_unlock(&mx_timeref);
-                            MSG("WARNING: [down] no valid GPS time reference yet, impossible to send packet on specific GPS time, TX aborted\n");
-                            json_value_free(root_val);
+                    /* Build lgw_pkt_tx_s - field names vary by HAL version */
+                    struct lgw_pkt_tx_s txpkt;
+                    memset(&txpkt, 0, sizeof(txpkt));
 
-                            /* send acknoledge datagram to server */
-                            send_tx_ack(buff_down[1], buff_down[2], JIT_ERROR_GPS_UNLOCKED, 0);
-                            continue;
-                        }
-                    } else {
-                        MSG("WARNING: [down] GPS disabled, impossible to send packet on specific GPS time, TX aborted\n");
-                        json_value_free(root_val);
+                    /* Copy payload */
+                    memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
+                    txpkt.size = buf_capacity;
 
-                        /* send acknoledge datagram to server */
-                        send_tx_ack(buff_down[1], buff_down[2], JIT_ERROR_GPS_UNLOCKED, 0);
-                        continue;
-                    }
+                    /* Frequency and timestamp */
+                    txpkt.freq_hz = dl_freq_hz;
 
-                    /* Get GPS time from JSON */
-                    x2 = (uint64_t)json_value_get_number(val);
+                    /* Scheduling: choose TIMESTAMPED vs IMMEDIATE depending on dl_tmst and forwarder expectations.
+                       Many forwarders expect a timestamp in txpkt.count_us (or txpkt.tmst). Use the same field name your code uses. */
+                    txpkt.count_us = dl_tmst;    /* change to txpkt.tmst if your code uses tmst */
 
-                    /* Convert GPS time from milliseconds to timespec */
-                    x3 = modf((double)x2/1E3, &x4);
-                    gps_tx.tv_sec = (time_t)x4; /* get seconds from integer part */
-                    gps_tx.tv_nsec = (long)(x3 * 1E9); /* get nanoseconds from fractional part */
+                    /* Choose tx_mode:
+                       - IMMEDIATE: send as soon as possible
+                       - TIMESTAMPED: send at provided timestamp (count_us/tmst)
+                       Replace IMMEDIATE/TIMESTAMPED with the constants used in your lora_pkt_fwd code. */
+                    txpkt.tx_mode = TIMESTAMPED; // or IMMEDIATE
 
-                    /* transform GPS time to timestamp */
-                    i = lgw_gps2cnt(local_ref, gps_tx, &(txpkt.count_us));
-                    if (i != LGW_GPS_SUCCESS) {
-                        MSG("WARNING: [down] could not convert GPS time to timestamp, TX aborted\n");
-                        json_value_free(root_val);
-                        continue;
-                    } else {
-                        MSG("INFO: [down] a packet will be sent on timestamp value %u (calculated from GPS time)\n", txpkt.count_us);
-                    }
+                    /* RF chain and power */
+                    txpkt.rf_chain = dl_rf_chain;     // or set to an appropriate chain
+                    txpkt.rf_power = dl_tx_power_dbm; // verify units expected by HAL
 
-                    /* GPS timestamp is given, we consider it is a Class B downlink */
-                    downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_B;
+                    /* Modulation params — update mapping to your HAL struct */
+                    // Example for LoRa:
+                    txpkt.modulation = MOD_LORA;     // ensure these enums exist in your build
+                    txpkt.datarate = DR_LORA_SF12;
+                    txpkt.bandwidth = BW_125KHZ;      // may need mapping to a bandwidth enum
+                    txpkt.coderate = CR_LORA_4_5;
                 }
             }
-
-            /* Parse "No CRC" flag (optional field) */
-            val = json_object_get_value(txpk_obj,"ncrc");
-            if (val != NULL) {
-                txpkt.no_crc = (bool)json_value_get_boolean(val);
-            }
-
-            /* Parse "No header" flag (optional field) */
-            val = json_object_get_value(txpk_obj,"nhdr");
-            if (val != NULL) {
-                txpkt.no_header = (bool)json_value_get_boolean(val);
-            }
-
-            /* parse target frequency (mandatory) */
-            val = json_object_get_value(txpk_obj,"freq");
-            if (val == NULL) {
-                MSG("WARNING: [down] no mandatory \"txpk.freq\" object in JSON, TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-            txpkt.freq_hz = (uint32_t)((double)(1.0e6) * json_value_get_number(val));
-
-            /* parse RF chain used for TX (mandatory) */
-            val = json_object_get_value(txpk_obj,"rfch");
-            if (val == NULL) {
-                MSG("WARNING: [down] no mandatory \"txpk.rfch\" object in JSON, TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-            txpkt.rf_chain = (uint8_t)json_value_get_number(val);
-            if (tx_enable[txpkt.rf_chain] == false) {
-                MSG("WARNING: [down] TX is not enabled on RF chain %u, TX aborted\n", txpkt.rf_chain);
-                json_value_free(root_val);
-                continue;
-            }
-
-            /* parse TX power (optional field) */
-            val = json_object_get_value(txpk_obj,"powe");
-            if (val != NULL) {
-                txpkt.rf_power = (int8_t)json_value_get_number(val) - antenna_gain;
-            }
-
-            /* Parse modulation (mandatory) */
-            str = json_object_get_string(txpk_obj, "modu");
-            if (str == NULL) {
-                MSG("WARNING: [down] no mandatory \"txpk.modu\" object in JSON, TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-            if (strcmp(str, "LORA") == 0) {
-                /* Lora modulation */
-                txpkt.modulation = MOD_LORA;
-
-                /* Parse Lora spreading-factor and modulation bandwidth (mandatory) */
-                str = json_object_get_string(txpk_obj, "datr");
-                if (str == NULL) {
-                    MSG("WARNING: [down] no mandatory \"txpk.datr\" object in JSON, TX aborted\n");
-                    json_value_free(root_val);
-                    continue;
-                }
-                i = sscanf(str, "SF%2hdBW%3hd", &x0, &x1);
-                if (i != 2) {
-                    MSG("WARNING: [down] format error in \"txpk.datr\", TX aborted\n");
-                    json_value_free(root_val);
-                    continue;
-                }
-                switch (x0) {
-                    case  5: txpkt.datarate = DR_LORA_SF5;  break;
-                    case  6: txpkt.datarate = DR_LORA_SF6;  break;
-                    case  7: txpkt.datarate = DR_LORA_SF7;  break;
-                    case  8: txpkt.datarate = DR_LORA_SF8;  break;
-                    case  9: txpkt.datarate = DR_LORA_SF9;  break;
-                    case 10: txpkt.datarate = DR_LORA_SF10; break;
-                    case 11: txpkt.datarate = DR_LORA_SF11; break;
-                    case 12: txpkt.datarate = DR_LORA_SF12; break;
-                    default:
-                        MSG("WARNING: [down] format error in \"txpk.datr\", invalid SF, TX aborted\n");
-                        json_value_free(root_val);
-                        continue;
-                }
-                switch (x1) {
-                    case 125: txpkt.bandwidth = BW_125KHZ; break;
-                    case 250: txpkt.bandwidth = BW_250KHZ; break;
-                    case 500: txpkt.bandwidth = BW_500KHZ; break;
-                    default:
-                        MSG("WARNING: [down] format error in \"txpk.datr\", invalid BW, TX aborted\n");
-                        json_value_free(root_val);
-                        continue;
-                }
-
-                /* Parse ECC coding rate (optional field) */
-                str = json_object_get_string(txpk_obj, "codr");
-                if (str == NULL) {
-                    MSG("WARNING: [down] no mandatory \"txpk.codr\" object in json, TX aborted\n");
-                    json_value_free(root_val);
-                    continue;
-                }
-                if      (strcmp(str, "4/5") == 0) txpkt.coderate = CR_LORA_4_5;
-                else if (strcmp(str, "4/6") == 0) txpkt.coderate = CR_LORA_4_6;
-                else if (strcmp(str, "2/3") == 0) txpkt.coderate = CR_LORA_4_6;
-                else if (strcmp(str, "4/7") == 0) txpkt.coderate = CR_LORA_4_7;
-                else if (strcmp(str, "4/8") == 0) txpkt.coderate = CR_LORA_4_8;
-                else if (strcmp(str, "1/2") == 0) txpkt.coderate = CR_LORA_4_8;
-                else {
-                    MSG("WARNING: [down] format error in \"txpk.codr\", TX aborted\n");
-                    json_value_free(root_val);
-                    continue;
-                }
-
-                /* Parse signal polarity switch (optional field) */
-                val = json_object_get_value(txpk_obj,"ipol");
-                if (val != NULL) {
-                    txpkt.invert_pol = (bool)json_value_get_boolean(val);
-                }
-
-                /* parse Lora preamble length (optional field, optimum min value enforced) */
-                val = json_object_get_value(txpk_obj,"prea");
-                if (val != NULL) {
-                    i = (int)json_value_get_number(val);
-                    if (i >= MIN_LORA_PREAMB) {
-                        txpkt.preamble = (uint16_t)i;
-                    } else {
-                        txpkt.preamble = (uint16_t)MIN_LORA_PREAMB;
-                    }
-                } else {
-                    txpkt.preamble = (uint16_t)STD_LORA_PREAMB;
-                }
-
-            } else if (strcmp(str, "FSK") == 0) {
-                /* FSK modulation */
-                txpkt.modulation = MOD_FSK;
-
-                /* parse FSK bitrate (mandatory) */
-                val = json_object_get_value(txpk_obj,"datr");
-                if (val == NULL) {
-                    MSG("WARNING: [down] no mandatory \"txpk.datr\" object in JSON, TX aborted\n");
-                    json_value_free(root_val);
-                    continue;
-                }
-                txpkt.datarate = (uint32_t)(json_value_get_number(val));
-
-                /* parse frequency deviation (mandatory) */
-                val = json_object_get_value(txpk_obj,"fdev");
-                if (val == NULL) {
-                    MSG("WARNING: [down] no mandatory \"txpk.fdev\" object in JSON, TX aborted\n");
-                    json_value_free(root_val);
-                    continue;
-                }
-                txpkt.f_dev = (uint8_t)(json_value_get_number(val) / 1000.0); /* JSON value in Hz, txpkt.f_dev in kHz */
-
-                /* parse FSK preamble length (optional field, optimum min value enforced) */
-                val = json_object_get_value(txpk_obj,"prea");
-                if (val != NULL) {
-                    i = (int)json_value_get_number(val);
-                    if (i >= MIN_FSK_PREAMB) {
-                        txpkt.preamble = (uint16_t)i;
-                    } else {
-                        txpkt.preamble = (uint16_t)MIN_FSK_PREAMB;
-                    }
-                } else {
-                    txpkt.preamble = (uint16_t)STD_FSK_PREAMB;
-                }
-
-            } else {
-                MSG("WARNING: [down] invalid modulation in \"txpk.modu\", TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-
-            /* Parse payload length (mandatory) */
-            val = json_object_get_value(txpk_obj,"size");
-            if (val == NULL) {
-                MSG("WARNING: [down] no mandatory \"txpk.size\" object in JSON, TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-            txpkt.size = (uint16_t)json_value_get_number(val);
-
-            /* Parse payload data (mandatory) */
-            str = json_object_get_string(txpk_obj, "data");
-            if (str == NULL) {
-                MSG("WARNING: [down] no mandatory \"txpk.data\" object in JSON, TX aborted\n");
-                json_value_free(root_val);
-                continue;
-            }
-            i = b64_to_bin(str, strlen(str), txpkt.payload, sizeof txpkt.payload);
-            if (i != txpkt.size) {
-                MSG("WARNING: [down] mismatch between .size and .data size once converter to binary\n");
-            }
-
-            /* free the JSON parse tree from memory */
-            json_value_free(root_val);
-
-            /* select TX mode */
-            if (sent_immediate) {
-                txpkt.tx_mode = IMMEDIATE;
-            } else {
-                txpkt.tx_mode = TIMESTAMPED;
-            }
+            /* End of Zaihan's code */
 
             /* record measurement data */
             pthread_mutex_lock(&mx_meas_dw);
@@ -2949,6 +2599,16 @@ void thread_down(void) {
             /* reset error/warning results */
             jit_result = warning_result = JIT_ERROR_OK;
             warning_value = 0;
+
+	    // Various FIXMEs TODO
+	    
+	    /* FIXME: enumerate proper txpkt.freq_hz, 
+	      txpkt.freq_hz = (uint32_t)((double)(1.0e6) * json_value_get_number(val));
+	    */
+
+            // FIXME: use proper txpkt.rfchain
+
+	    // FIXME: use proper txpkt.rfpower
 
             /* check TX frequency before trying to queue packet */
             if ((txpkt.freq_hz < tx_freq_min[txpkt.rf_chain]) || (txpkt.freq_hz > tx_freq_max[txpkt.rf_chain])) {
@@ -2967,6 +2627,8 @@ void thread_down(void) {
                     txpkt.rf_power = txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
                 }
             }
+
+            downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
 
             /* insert packet to be sent into JIT queue */
             if (jit_result == JIT_ERROR_OK) {
