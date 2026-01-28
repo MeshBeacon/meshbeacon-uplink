@@ -1997,8 +1997,8 @@ void thread_up(void) {
     uint16_t mote_fcnt = 0;
 
     /* Zaihan's code */
-    const uint8_t *payload = rxpkt->payload;   // usually pkt->payload
-    uint16_t size = rxpkt->size;               // usually pkt->size
+    const uint8_t *payload;    // usually pkt->payload
+    uint16_t size;             // usually pkt->size
 
     // Map RSSI: common names are rssic (int16) or rssi (int8). Update to match your struct:
     int16_t rssi = 0;
@@ -2030,23 +2030,6 @@ void thread_up(void) {
     // bandwidth_hz = pkt->bandwidth_hz; // if available
     // datarate_sf = pkt->datarate;      // often encoded (for LoRa this is SF)
     // coderate = pkt->coderate;         // if available
-
-    // Example using the most common member names - adjust if your struct differs:
-    #if 1
-    /* Edit these three lines to match your lgw_pkt_rx_s layout */
-    rssi = (int16_t)rxpkt->rssic;     /* change if your name differs */
-    snr  = rxpkt->snr;
-    freq_hz = rxpkt->freq_hz;
-    tmst = rxpkt->count_us;
-    rf_chain = rxpkt->if_chain;
-    #endif
-
-    // Finally call the ClusterDuck bridge:
-    duck_handle_gateway_rx(payload, size,
-                           rssi, snr,
-                           freq_hz, tmst, rf_chain,
-                           bandwidth_hz, datarate_sf, coderate);
-    /* End of Zaihan's code */
 
     /* set upstream socket RX timeout */
     i = setsockopt(sock_up, SOL_SOCKET, SO_RCVTIMEO, (void *)&push_timeout_half, sizeof push_timeout_half);
@@ -2117,6 +2100,28 @@ void thread_up(void) {
                 MSG_PRINTF(DEBUG_PKT_FWD, "Total number of LoRa packet received from 0x%08X: %u\n", debugconf.ref_payload[l].id, nb_pkt_received_ref[l]);
             }
         }
+
+        // Example using the most common member names - adjust if your struct differs:
+        //#if 1
+        /* Edit these three lines to match your lgw_pkt_rx_s layout */
+        rssi = (int16_t)rxpkt->rssic;     /* change if your name differs */
+        snr  = rxpkt->snr;
+        freq_hz = rxpkt->freq_hz;
+        tmst = rxpkt->count_us;
+        rf_chain = rxpkt->if_chain;
+        // custom variables added by zaihan
+        bandwidth_hz = rxpkt->bandwidth;
+        datarate_sf = rxpkt->datarate;
+        coderate = rxpkt->coderate;
+        payload = rxpkt->payload;   // usually pkt->payload
+        size = rxpkt->size;               // usually pkt->size
+        //#endif
+
+        // Finally call the ClusterDuck bridge:
+        duck_handle_gateway_rx(payload, size,
+                               rssi, snr,
+                               freq_hz, tmst, rf_chain,
+                               bandwidth_hz, datarate_sf, coderate);
 
         /* restart fetch sequence without sending empty JSON if all packets have been filtered out */
         if (pkt_in_dgram == 0) {
@@ -2298,70 +2303,68 @@ void thread_down(void) {
     uint8_t tx_lut_idx = 0;
 
     /* Zaihan's code */
+    /* Buffer for a possible downlink from ClusterDuck */
+    uint8_t duck_payload_buf[256];
+    uint16_t buf_capacity = sizeof(duck_payload_buf);
+    uint32_t dl_freq_hz = 0;
+    uint32_t dl_tmst = 0;
+    int16_t dl_tx_power_dbm = 0;
+    uint32_t dl_bw_hz = 0;
+    uint8_t dl_sf = 0;
+    uint8_t dl_cr = 0;
+    uint8_t dl_rf_chain = 0;
 
-/* Buffer for a possible downlink from ClusterDuck */
-uint8_t duck_payload_buf[256];
-uint16_t buf_capacity = sizeof(duck_payload_buf);
-uint32_t dl_freq_hz = 0;
-uint32_t dl_tmst = 0;
-int16_t dl_tx_power_dbm = 0;
-uint32_t dl_bw_hz = 0;
-uint8_t dl_sf = 0;
-uint8_t dl_cr = 0;
-uint8_t dl_rf_chain = 0;
+    /* Try to pop a downlink from ClusterDuck */
+    int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
+                                    &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
+                                    &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
-/* Try to pop a downlink from ClusterDuck */
-int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
-                                &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
-                                &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
-
-if (duck_rc == 0) {
-    /* buf_capacity now holds actual downlink payload size */
-    if (buf_capacity == 0) {
-        // buffer too small; allocate larger buffer or handle error
-    } else {
-        /* Build lgw_pkt_tx_s - field names vary by HAL version */
-        struct lgw_pkt_tx_s txpkt;
-        memset(&txpkt, 0, sizeof(txpkt));
-
-        /* Copy payload */
-        memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
-        txpkt.size = buf_capacity;
-
-        /* Frequency and timestamp */
-        txpkt.freq_hz = dl_freq_hz;
-
-        /* Scheduling: choose TIMESTAMPED vs IMMEDIATE depending on dl_tmst and forwarder expectations.
-           Many forwarders expect a timestamp in txpkt.count_us (or txpkt.tmst). Use the same field name your code uses. */
-        txpkt.count_us = dl_tmst;    /* change to txpkt.tmst if your code uses tmst */
-
-        /* Choose tx_mode:
-           - IMMEDIATE: send as soon as possible
-           - TIMESTAMPED: send at provided timestamp (count_us/tmst)
-           Replace IMMEDIATE/TIMESTAMPED with the constants used in your lora_pkt_fwd code. */
-        txpkt.tx_mode = TIMESTAMPED; // or IMMEDIATE
-
-        /* RF chain and power */
-        txpkt.rf_chain = dl_rf_chain;     // or set to an appropriate chain
-        txpkt.rf_power = dl_tx_power_dbm; // verify units expected by HAL
-
-        /* Modulation params — update mapping to your HAL struct */
-        // Example for LoRa:
-        txpkt.modulation = MOD_LORA;     // ensure these enums exist in your build
-        txpkt.datarate = dl_sf;          // some HALs expect a special enum; adjust
-        txpkt.bandwidth = dl_bw_hz;      // may need mapping to a bandwidth enum
-        txpkt.coderate = dl_cr;
-
-        /* Enqueue or transmit:
-           The function to trigger tx is often lgw_tx(&txpkt) or a local wrapper. Use the one used by your forwarder. */
-        if (lgw_send(&txpkt) != LGW_HAL_SUCCESS) {
-            // handle tx fail (log / drop)
+    if (duck_rc == 0) {
+        /* buf_capacity now holds actual downlink payload size */
+        if (buf_capacity == 0) {
+            // buffer too small; allocate larger buffer or handle error
         } else {
-            // success: optionally log
+            /* Build lgw_pkt_tx_s - field names vary by HAL version */
+            struct lgw_pkt_tx_s txpkt;
+            memset(&txpkt, 0, sizeof(txpkt));
+
+            /* Copy payload */
+            memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
+            txpkt.size = buf_capacity;
+
+            /* Frequency and timestamp */
+            txpkt.freq_hz = dl_freq_hz;
+
+            /* Scheduling: choose TIMESTAMPED vs IMMEDIATE depending on dl_tmst and forwarder expectations.
+               Many forwarders expect a timestamp in txpkt.count_us (or txpkt.tmst). Use the same field name your code uses. */
+            txpkt.count_us = dl_tmst;    /* change to txpkt.tmst if your code uses tmst */
+
+            /* Choose tx_mode:
+               - IMMEDIATE: send as soon as possible
+               - TIMESTAMPED: send at provided timestamp (count_us/tmst)
+               Replace IMMEDIATE/TIMESTAMPED with the constants used in your lora_pkt_fwd code. */
+            txpkt.tx_mode = TIMESTAMPED; // or IMMEDIATE
+
+            /* RF chain and power */
+            txpkt.rf_chain = dl_rf_chain;     // or set to an appropriate chain
+            txpkt.rf_power = dl_tx_power_dbm; // verify units expected by HAL
+
+            /* Modulation params — update mapping to your HAL struct */
+            // Example for LoRa:
+            txpkt.modulation = MOD_LORA;     // ensure these enums exist in your build
+            txpkt.datarate = dl_sf;          // some HALs expect a special enum; adjust
+            txpkt.bandwidth = dl_bw_hz;      // may need mapping to a bandwidth enum
+            txpkt.coderate = dl_cr;
+
+            /* Enqueue or transmit:
+               The function to trigger tx is often lgw_tx(&txpkt) or a local wrapper. Use the one used by your forwarder. */
+            if (lgw_send(&txpkt) != LGW_HAL_SUCCESS) {
+                // handle tx fail (log / drop)
+            } else {
+                // success: optionally log
+            }
         }
     }
-}
-
     /* End of Zaihan's code */
 
     /* set downstream socket RX timeout */
