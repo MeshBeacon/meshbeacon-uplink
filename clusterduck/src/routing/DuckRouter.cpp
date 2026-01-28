@@ -1,13 +1,5 @@
 #include "DuckRouter.h"
 
-unsigned long millis() {
-    struct timespec ts;
-    // Use CLOCK_MONOTONIC to get time since boot, which is not affected by system time changes
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    // Convert seconds and nanoseconds to milliseconds
-    return (ts.tv_sec * 1000 + ts.tv_nsec / 1000000L);
-}
-
 void DuckRouter::insertIntoRoutingTable(Duid deviceID, Duid nextHop, SignalScore signalInfo) {
 
     Neighbor neighborRecord(deviceID, nextHop, signalInfo, millis());

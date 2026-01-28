@@ -77,7 +77,7 @@ int DuckLoRa::checkLoRaParameters(LoRaConfigParams config) { //this can be impro
         logerr_ln("ERROR  bandwidth is invalid");
         return DUCK_ERR_INVALID_ARGUMENT;
     }
-    if (config.gain < 0 || config.gain > 3) {
+    if (config.gain < 1|| config.gain > 3) {
         logerr_ln("ERROR  gain is invalid");
         return DUCK_ERR_INVALID_ARGUMENT;
     }
@@ -166,13 +166,13 @@ int DuckLoRa::setupRadio(const LoRaConfigParams &config) {
     return DUCK_ERR_NONE;
 }
 
-int DuckLoRa::goToReceiveMode(bool clearReceiveFlag) {
-/*    if (clearReceiveFlag) {
+/*int DuckLoRa::goToReceiveMode(bool clearReceiveFlag) {
+    if (clearReceiveFlag) {
       DuckLoRa::setReceiveFlag(false);
     }
-    return startReceive(); */
+    return startReceive(); 
     return true;
-}
+} */
 
 std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a std optional
     std::vector<uint8_t> packetBytes;
@@ -383,7 +383,7 @@ float DuckLoRa::getRSSI()
     return lora.getRSSI(); 
 }
 
-/*float DuckLoRa::getSNR()
+float DuckLoRa::getSNR()
 {
     if (!isSetup) {
         logerr_ln("ERROR  LoRa radio not setup");
@@ -579,6 +579,6 @@ int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     // Enqueue a downlink for the forwarder to transmit. We use tmst=0 to indicate "IMMEDIATE".
     // If you need timestamped scheduling, set tmst to a gateway timestamp value and have threads_down
     // treat non-zero tmst as TIMESTAMPED scheduling.
-    int rc = duck_enqueue_downlink(data, (int)length);
+    duck_enqueue_downlink(data, (int)length);
     return err;
 }
