@@ -184,7 +184,6 @@ static int sock_down; /* socket for downstream traffic */
 
 /* network protocol variables */
 static struct timeval push_timeout_half = {0, (PUSH_TIMEOUT_MS * 500)}; /* cut in half, critical for throughput */
-static struct timeval pull_timeout = {0, (PULL_TIMEOUT_MS * 1000)}; /* non critical for throughput */
 
 /* hardware access control and correction */
 pthread_mutex_t mx_concent = PTHREAD_MUTEX_INITIALIZER; /* control access to the concentrator */
@@ -1328,117 +1327,6 @@ static double difftimespec(struct timespec end, struct timespec beginning) {
     return x;
 }
 
-static int send_tx_ack(uint8_t token_h, uint8_t token_l, enum jit_error_e error, int32_t error_value) {
-    uint8_t buff_ack[ACK_BUFF_SIZE]; /* buffer to give feedback to server */
-    int buff_index;
-    int j;
-
-    /* reset buffer */
-    memset(&buff_ack, 0, sizeof buff_ack);
-
-    /* Prepare downlink feedback to be sent to server */
-    buff_ack[0] = PROTOCOL_VERSION;
-    buff_ack[1] = token_h;
-    buff_ack[2] = token_l;
-    buff_ack[3] = PKT_TX_ACK;
-    *(uint32_t *)(buff_ack + 4) = net_mac_h;
-    *(uint32_t *)(buff_ack + 8) = net_mac_l;
-    buff_index = 12; /* 12-byte header */
-
-    /* Put no JSON string if there is nothing to report */
-    if (error != JIT_ERROR_OK) {
-        /* start of JSON structure */
-        memcpy((void *)(buff_ack + buff_index), (void *)"{\"txpk_ack\":{", 13);
-        buff_index += 13;
-        /* set downlink error/warning status in JSON structure */
-        switch( error ) {
-            case JIT_ERROR_TX_POWER:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"warn\":", 7);
-                buff_index += 7;
-                break;
-            default:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"error\":", 8);
-                buff_index += 8;
-                break;
-        }
-        /* set error/warning type in JSON structure */
-        switch (error) {
-            case JIT_ERROR_FULL:
-            case JIT_ERROR_COLLISION_PACKET:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"COLLISION_PACKET\"", 18);
-                buff_index += 18;
-                /* update stats */
-                pthread_mutex_lock(&mx_meas_dw);
-                meas_nb_tx_rejected_collision_packet += 1;
-                pthread_mutex_unlock(&mx_meas_dw);
-                break;
-            case JIT_ERROR_TOO_LATE:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"TOO_LATE\"", 10);
-                buff_index += 10;
-                /* update stats */
-                pthread_mutex_lock(&mx_meas_dw);
-                meas_nb_tx_rejected_too_late += 1;
-                pthread_mutex_unlock(&mx_meas_dw);
-                break;
-            case JIT_ERROR_TOO_EARLY:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"TOO_EARLY\"", 11);
-                buff_index += 11;
-                /* update stats */
-                pthread_mutex_lock(&mx_meas_dw);
-                meas_nb_tx_rejected_too_early += 1;
-                pthread_mutex_unlock(&mx_meas_dw);
-                break;
-            case JIT_ERROR_COLLISION_BEACON:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"COLLISION_BEACON\"", 18);
-                buff_index += 18;
-                /* update stats */
-                pthread_mutex_lock(&mx_meas_dw);
-                meas_nb_tx_rejected_collision_beacon += 1;
-                pthread_mutex_unlock(&mx_meas_dw);
-                break;
-            case JIT_ERROR_TX_FREQ:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"TX_FREQ\"", 9);
-                buff_index += 9;
-                break;
-            case JIT_ERROR_TX_POWER:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"TX_POWER\"", 10);
-                buff_index += 10;
-                break;
-            case JIT_ERROR_GPS_UNLOCKED:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"GPS_UNLOCKED\"", 14);
-                buff_index += 14;
-                break;
-            default:
-                memcpy((void *)(buff_ack + buff_index), (void *)"\"UNKNOWN\"", 9);
-                buff_index += 9;
-                break;
-        }
-        /* set error/warning details in JSON structure */
-        switch (error) {
-            case JIT_ERROR_TX_POWER:
-                j = snprintf((char *)(buff_ack + buff_index), ACK_BUFF_SIZE-buff_index, ",\"value\":%d", error_value);
-                if (j > 0) {
-                    buff_index += j;
-                } else {
-                    MSG("ERROR: [up] snprintf failed line %u\n", (__LINE__ - 4));
-                    exit(EXIT_FAILURE);
-                }
-                break;
-            default:
-                /* Do nothing */
-                break;
-        }
-        /* end of JSON structure */
-        memcpy((void *)(buff_ack + buff_index), (void *)"}}", 2);
-        buff_index += 2;
-    }
-
-    buff_ack[buff_index] = 0; /* add string terminator, for safety */
-
-    /* send datagram to server */
-    return send(sock_down, (void *)buff_ack, buff_index, 0);
-}
-
 /* -------------------------------------------------------------------------- */
 /* --- MAIN FUNCTION -------------------------------------------------------- */
 
@@ -1974,45 +1862,19 @@ int main(int argc, char ** argv)
 /* --- THREAD 1: RECEIVING PACKETS AND FORWARDING THEM ---------------------- */
 
 void thread_up(void) {
-    int i, j, k; /* loop variables */
-    unsigned pkt_in_dgram; /* nb on Lora packet in the current datagram */
+    int i; /* loop variables */
     char stat_timestamp[24];
     time_t t;
 
     /* allocate memory for packet fetching and processing */
     struct lgw_pkt_rx_s rxpkt[NB_PKT_MAX]; /* array containing inbound packets + metadata */
-    struct lgw_pkt_rx_s *p; /* pointer on a RX packet */
     int nb_pkt;
-
-    /* local copy of GPS time reference */
-    bool ref_ok = false; /* determine if GPS time reference must be used or not */
-    struct tref local_ref; /* time reference used for UTC <-> timestamp conversion */
 
     /* data buffers */
     uint8_t buff_up[TX_BUFF_SIZE]; /* buffer to compose the upstream packet */
-    int buff_index;
-    uint8_t buff_ack[32]; /* buffer to receive acknowledges */
-
-    /* protocol variables */
-    uint8_t token_h; /* random token for acknowledgement matching */
-    uint8_t token_l; /* random token for acknowledgement matching */
-
-    /* ping measurement variables */
-    struct timespec send_time;
-    struct timespec recv_time;
-
-    /* GPS synchronization variables */
-    struct timespec pkt_utc_time;
-    struct tm * x; /* broken-up UTC time */
-    struct timespec pkt_gps_time;
-    uint64_t pkt_gps_time_ms;
 
     /* report management variable */
     bool send_report = false;
-
-    /* mote info variables */
-    uint32_t mote_addr = 0;
-    uint16_t mote_fcnt = 0;
 
     /* Zaihan's code */
     const uint8_t *payload;    // usually pkt->payload
@@ -2081,16 +1943,6 @@ void thread_up(void) {
         if ((nb_pkt == 0) && (send_report == false)) {
             wait_ms(FETCH_SLEEP_MS);
             continue;
-        }
-
-        /* get a copy of GPS time reference (avoid 1 mutex per packet) */
-        if ((nb_pkt > 0) && (gps_enabled == true)) {
-            pthread_mutex_lock(&mx_timeref);
-            ref_ok = gps_ref_valid;
-            local_ref = time_reference_gps;
-            pthread_mutex_unlock(&mx_timeref);
-        } else {
-            ref_ok = false;
         }
 
         /* get timestamp for statistics */
@@ -2192,7 +2044,6 @@ void thread_down(void) {
 
     /* configuration and metadata for an outbound packet */
     struct lgw_pkt_tx_s txpkt;
-    bool sent_immediate = false; /* option to sent the packet immediately */
 
     /* local timekeeping variables */
     struct timespec send_time; /* time of the pull request */
@@ -2206,17 +2057,6 @@ void thread_down(void) {
     /* protocol variables */
     uint8_t token_h; /* random token for acknowledgement matching */
     uint8_t token_l; /* random token for acknowledgement matching */
-    bool req_ack = false; /* keep track of whether PULL_DATA was acknowledged or not */
-
-    /* JSON parsing variables */
-    JSON_Value *root_val = NULL;
-    JSON_Object *txpk_obj = NULL;
-    JSON_Value *val = NULL; /* needed to detect the absence of some fields */
-    const char *str; /* pointer to sub-strings in the JSON data */
-
-    /* variables to send on GPS timestamp */
-    struct tref local_ref; /* time reference used for GPS <-> timestamp conversion */
-    struct timespec gps_tx; /* GPS time that needs to be converted to timestamp */
 
     /* beacon variables */
     struct lgw_pkt_tx_s beacon_pkt;
@@ -2380,7 +2220,6 @@ void thread_down(void) {
         pthread_mutex_lock(&mx_meas_dw);
         meas_dw_pull_sent += 1;
         pthread_mutex_unlock(&mx_meas_dw);
-        req_ack = false;
         autoquit_cnt++;
 
         /* listen to packets and process them until a new PULL request must be sent */
@@ -2581,9 +2420,6 @@ void thread_down(void) {
                 meas_nb_tx_requested += 1;
                 pthread_mutex_unlock(&mx_meas_dw);
             }
-
-            /* Send acknoledge datagram to server */
-            send_tx_ack(buff_down[1], buff_down[2], jit_result, warning_value);
         }
     }
     MSG("\nINFO: End of downstream thread\n");
