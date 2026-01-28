@@ -77,7 +77,7 @@ int DuckLoRa::checkLoRaParameters(LoRaConfigParams config) { //this can be impro
         logerr_ln("ERROR  bandwidth is invalid");
         return DUCK_ERR_INVALID_ARGUMENT;
     }
-    if (config.gain < 1|| config.gain > 3) {
+    if (config.gain <= 0 || config.gain > 3) {
         logerr_ln("ERROR  gain is invalid");
         return DUCK_ERR_INVALID_ARGUMENT;
     }
