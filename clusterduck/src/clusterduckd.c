@@ -69,21 +69,11 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 
 /* CDP default radio parameters (from cdpcfg.h).
    If cdpcfg.h is not available in this build context, use these constants. */
-#ifndef CDPCFG_RF_LORA_FREQ_HZ
-#define CDPCFG_RF_LORA_FREQ_HZ 923000000U
-#endif
-#ifndef CDPCFG_RF_LORA_BW
+#define CDPCFG_RF_LORA_FREQ_HZ 923000000
 #define CDPCFG_RF_LORA_BW 125.0f
-#endif
-#ifndef CDPCFG_RF_LORA_SF
 #define CDPCFG_RF_LORA_SF 7
-#endif
-#ifndef CDPCFG_RF_LORA_TXPOW
 #define CDPCFG_RF_LORA_TXPOW 10
-#endif
-#ifndef CDPCFG_RF_LORA_GAIN
 #define CDPCFG_RF_LORA_GAIN 0
-#endif
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE CONSTANTS ---------------------------------------------------- */
@@ -179,7 +169,6 @@ static uint32_t net_mac_h; /* Most Significant Nibble, network order */
 static uint32_t net_mac_l; /* Least Significant Nibble, network order */
 
 /* network sockets */
-static int sock_up; /* socket for upstream traffic */
 static int sock_down; /* socket for downstream traffic */
 
 /* network protocol variables */
@@ -1349,13 +1338,6 @@ int main(int argc, char ** argv)
     pthread_t thrid_jit;
     pthread_t thrid_ss;
 
-    /* network socket creation */
-    struct addrinfo hints;
-    struct addrinfo *result; /* store result of getaddrinfo */
-    struct addrinfo *q; /* pointer to move into *result data */
-    char host_name[64];
-    char port_name[64];
-
     /* variables to get local copies of measurements */
     uint32_t cp_nb_rx_rcv;
     uint32_t cp_nb_rx_ok;
@@ -1474,79 +1456,6 @@ int main(int argc, char ** argv)
 
     /* sanity check on configuration variables */
     // TODO
-
-    /* process some of the configuration variables */
-    net_mac_h = htonl((uint32_t)(0xFFFFFFFF & (lgwm>>32)));
-    net_mac_l = htonl((uint32_t)(0xFFFFFFFF &  lgwm  ));
-
-    /* prepare hints to open network sockets */
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET; /* WA: Forcing IPv4 as AF_UNSPEC makes connection on localhost to fail */
-    hints.ai_socktype = SOCK_DGRAM;
-
-    /* look for server address w/ upstream port */
-    i = getaddrinfo(serv_addr, serv_port_up, &hints, &result);
-    if (i != 0) {
-        MSG("ERROR: [up] getaddrinfo on address %s (PORT %s) returned %s\n", serv_addr, serv_port_up, gai_strerror(i));
-        exit(EXIT_FAILURE);
-    }
-
-    /* try to open socket for upstream traffic */
-    for (q=result; q!=NULL; q=q->ai_next) {
-        sock_up = socket(q->ai_family, q->ai_socktype,q->ai_protocol);
-        if (sock_up == -1) continue; /* try next field */
-        else break; /* success, get out of loop */
-    }
-    if (q == NULL) {
-        MSG("ERROR: [up] failed to open socket to any of server %s addresses (port %s)\n", serv_addr, serv_port_up);
-        i = 1;
-        for (q=result; q!=NULL; q=q->ai_next) {
-            getnameinfo(q->ai_addr, q->ai_addrlen, host_name, sizeof host_name, port_name, sizeof port_name, NI_NUMERICHOST);
-            MSG("INFO: [up] result %i host:%s service:%s\n", i, host_name, port_name);
-            ++i;
-        }
-        exit(EXIT_FAILURE);
-    }
-
-    /* connect so we can send/receive packet with the server only */
-    i = connect(sock_up, q->ai_addr, q->ai_addrlen);
-    if (i != 0) {
-        MSG("ERROR: [up] connect returned %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
-    freeaddrinfo(result);
-
-    /* look for server address w/ downstream port */
-    i = getaddrinfo(serv_addr, serv_port_down, &hints, &result);
-    if (i != 0) {
-        MSG("ERROR: [down] getaddrinfo on address %s (port %s) returned %s\n", serv_addr, serv_port_down, gai_strerror(i));
-        exit(EXIT_FAILURE);
-    }
-
-    /* try to open socket for downstream traffic */
-    for (q=result; q!=NULL; q=q->ai_next) {
-        sock_down = socket(q->ai_family, q->ai_socktype,q->ai_protocol);
-        if (sock_down == -1) continue; /* try next field */
-        else break; /* success, get out of loop */
-    }
-    if (q == NULL) {
-        MSG("ERROR: [down] failed to open socket to any of server %s addresses (port %s)\n", serv_addr, serv_port_down);
-        i = 1;
-        for (q=result; q!=NULL; q=q->ai_next) {
-            getnameinfo(q->ai_addr, q->ai_addrlen, host_name, sizeof host_name, port_name, sizeof port_name, NI_NUMERICHOST);
-            MSG("INFO: [down] result %i host:%s service:%s\n", i, host_name, port_name);
-            ++i;
-        }
-        exit(EXIT_FAILURE);
-    }
-
-    /* connect so we can send/receive packet with the server only */
-    i = connect(sock_down, q->ai_addr, q->ai_addrlen);
-    if (i != 0) {
-        MSG("ERROR: [down] connect returned %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
-    freeaddrinfo(result);
 
     if (com_type == LGW_COM_SPI) {
         /* Board reset */
@@ -1820,6 +1729,7 @@ int main(int argc, char ** argv)
             printf("ERROR: failed to join Spectral Scan thread with %d - %s\n", i, strerror(errno));
         }
     }
+
     if (gps_enabled == true) {
         pthread_cancel(thrid_gps); /* don't wait for GPS thread, no access to concentrator board */
         pthread_cancel(thrid_valid); /* don't wait for validation thread, no access to concentrator board */
@@ -1834,9 +1744,6 @@ int main(int argc, char ** argv)
 
     /* if an exit signal was received, try to quit properly */
     if (exit_sig) {
-        /* shut down network sockets */
-        shutdown(sock_up, SHUT_RDWR);
-        shutdown(sock_down, SHUT_RDWR);
         /* stop the hardware */
         i = lgw_stop();
         if (i == LGW_HAL_SUCCESS) {
@@ -1854,7 +1761,7 @@ int main(int argc, char ** argv)
         }
     }
 
-    MSG("INFO: Exiting packet forwarder program\n");
+    MSG("INFO: Exiting clusterduckd program\n");
     exit(EXIT_SUCCESS);
 }
 
@@ -1862,7 +1769,6 @@ int main(int argc, char ** argv)
 /* --- THREAD 1: RECEIVING PACKETS AND FORWARDING THEM ---------------------- */
 
 void thread_up(void) {
-    int i; /* loop variables */
     char stat_timestamp[24];
     time_t t;
 
@@ -1910,13 +1816,6 @@ void thread_up(void) {
     // bandwidth_hz = pkt->bandwidth_hz; // if available
     // datarate_sf = pkt->datarate;      // often encoded (for LoRa this is SF)
     // coderate = pkt->coderate;         // if available
-
-    /* set upstream socket RX timeout */
-    i = setsockopt(sock_up, SOL_SOCKET, SO_RCVTIMEO, (void *)&push_timeout_half, sizeof push_timeout_half);
-    if (i != 0) {
-        MSG("ERROR: [up] setsockopt returned %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
 
     /* pre-fill the data buffer with fixed fields */
     buff_up[0] = PROTOCOL_VERSION;
@@ -2369,57 +2268,60 @@ void thread_down(void) {
                     txpkt.datarate   = DR_LORA_SF7;
                     txpkt.coderate   = CR_LORA_4_5;
                 }
-            }
 
-            downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
 
-            /* End of Zaihan's code */
+	        MSG("INFO: txpkt size is %u\n", txpkt.size);
 
-            /* record measurement data */
-            pthread_mutex_lock(&mx_meas_dw);
-            meas_dw_dgram_rcv += 1; /* count only datagrams with no JSON errors */
-            meas_dw_network_byte += msg_len; /* meas_dw_network_byte */
-            meas_dw_payload_byte += txpkt.size;
-            pthread_mutex_unlock(&mx_meas_dw);
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
 
-            /* reset error/warning results */
-            jit_result = warning_result = JIT_ERROR_OK;
-            warning_value = 0;
+                /* End of Zaihan's code */
 
-            /* check TX frequency before trying to queue packet */
-            if ((txpkt.freq_hz < tx_freq_min[txpkt.rf_chain]) || (txpkt.freq_hz > tx_freq_max[txpkt.rf_chain])) {
-                jit_result = JIT_ERROR_TX_FREQ;
-                MSG("ERROR: Packet REJECTED, unsupported frequency - %u (min:%u,max:%u)\n", txpkt.freq_hz, tx_freq_min[txpkt.rf_chain], tx_freq_max[txpkt.rf_chain]);
-            }
-
-            /* check TX power before trying to queue packet, send a warning if not supported */
-            if (jit_result == JIT_ERROR_OK) {
-                i = get_tx_gain_lut_index(txpkt.rf_chain, txpkt.rf_power, &tx_lut_idx);
-                if ((i < 0) || (txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power != txpkt.rf_power)) {
-                    /* this RF power is not supported, throw a warning, and use the closest lower power supported */
-                    warning_result = JIT_ERROR_TX_POWER;
-                    warning_value = (int32_t)txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
-                    printf("WARNING: Requested TX power is not supported (%ddBm), actual power used: %ddBm\n", txpkt.rf_power, warning_value);
-                    txpkt.rf_power = txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
-                }
-            }
-
-            /* insert packet to be sent into JIT queue */
-            if (jit_result == JIT_ERROR_OK) {
-                pthread_mutex_lock(&mx_concent);
-                lgw_get_instcnt(&current_concentrator_time);
-                pthread_mutex_unlock(&mx_concent);
-                jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
-                if (jit_result != JIT_ERROR_OK) {
-                    printf("ERROR: Packet REJECTED (jit error=%d)\n", jit_result);
-                } else {
-                    /* In case of a warning having been raised before, we notify it */
-                    jit_result = warning_result;
-                }
+                /* record measurement data */
                 pthread_mutex_lock(&mx_meas_dw);
-                meas_nb_tx_requested += 1;
+                meas_dw_dgram_rcv += 1; /* count only datagrams with no JSON errors */
+                meas_dw_network_byte += msg_len; /* meas_dw_network_byte */
+                meas_dw_payload_byte += txpkt.size;
                 pthread_mutex_unlock(&mx_meas_dw);
-            }
+
+                /* reset error/warning results */
+                jit_result = warning_result = JIT_ERROR_OK;
+                warning_value = 0;
+
+                /* check TX frequency before trying to queue packet */
+                if ((txpkt.freq_hz < tx_freq_min[txpkt.rf_chain]) || (txpkt.freq_hz > tx_freq_max[txpkt.rf_chain])) {
+                    jit_result = JIT_ERROR_TX_FREQ;
+                    MSG("ERROR: Packet REJECTED, unsupported frequency - %u (min:%u,max:%u)\n", txpkt.freq_hz, tx_freq_min[txpkt.rf_chain], tx_freq_max[txpkt.rf_chain]);
+                }
+
+                /* check TX power before trying to queue packet, send a warning if not supported */
+                if (jit_result == JIT_ERROR_OK) {
+                    i = get_tx_gain_lut_index(txpkt.rf_chain, txpkt.rf_power, &tx_lut_idx);
+                    if ((i < 0) || (txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power != txpkt.rf_power)) {
+                        /* this RF power is not supported, throw a warning, and use the closest lower power supported */
+                        warning_result = JIT_ERROR_TX_POWER;
+                        warning_value = (int32_t)txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
+                        printf("WARNING: Requested TX power is not supported (%ddBm), actual power used: %ddBm\n", txpkt.rf_power, warning_value);
+                        txpkt.rf_power = txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
+                    }
+                }
+
+                /* insert packet to be sent into JIT queue */
+                if (jit_result == JIT_ERROR_OK) {
+                    pthread_mutex_lock(&mx_concent);
+                    lgw_get_instcnt(&current_concentrator_time);
+                    pthread_mutex_unlock(&mx_concent);
+                    jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
+                    if (jit_result != JIT_ERROR_OK) {
+                        printf("ERROR: Packet REJECTED (jit error=%d)\n", jit_result);
+                    } else {
+                        /* In case of a warning having been raised before, we notify it */
+                        jit_result = warning_result;
+                    }
+                    pthread_mutex_lock(&mx_meas_dw);
+                    meas_nb_tx_requested += 1;
+                    pthread_mutex_unlock(&mx_meas_dw);
+                }
+	    }
         }
     }
     MSG("\nINFO: End of downstream thread\n");
@@ -2707,16 +2609,16 @@ void thread_valid(void) {
     double x;
 
     /* correction debug */
-    // FILE * log_file = NULL;
-    // time_t now_time;
-    // char log_name[64];
+    FILE * log_file = NULL;
+    time_t now_time;
+    char log_name[64];
 
     /* initialization */
-    // time(&now_time);
-    // strftime(log_name,sizeof log_name,"xtal_err_%Y%m%dT%H%M%SZ.csv",localtime(&now_time));
-    // log_file = fopen(log_name, "w");
-    // setbuf(log_file, NULL);
-    // fprintf(log_file,"\"xtal_correct\",\"XERR_INIT_AVG %u XERR_FILT_COEF %u\"\n", XERR_INIT_AVG, XERR_FILT_COEF); // DEBUG
+    time(&now_time);
+    strftime(log_name,sizeof log_name,"xtal_err_%Y%m%dT%H%M%SZ.csv",localtime(&now_time));
+    log_file = fopen(log_name, "w");
+    setbuf(log_file, NULL);
+    fprintf(log_file,"\"xtal_correct\",\"XERR_INIT_AVG %u XERR_FILT_COEF %u\"\n", XERR_INIT_AVG, XERR_FILT_COEF); // DEBUG
 
     /* main loop task */
     while (!exit_sig && !quit_sig) {
