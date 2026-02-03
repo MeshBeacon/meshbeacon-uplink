@@ -1344,14 +1344,8 @@ int main(int argc, char ** argv)
     uint32_t cp_nb_rx_bad;
     uint32_t cp_nb_rx_nocrc;
     uint32_t cp_up_pkt_fwd;
-    uint32_t cp_up_network_byte;
     uint32_t cp_up_payload_byte;
-    uint32_t cp_up_dgram_sent;
-    uint32_t cp_up_ack_rcv;
-    uint32_t cp_dw_pull_sent;
-    uint32_t cp_dw_ack_rcv;
     uint32_t cp_dw_dgram_rcv;
-    uint32_t cp_dw_network_byte;
     uint32_t cp_dw_payload_byte;
     uint32_t cp_nb_tx_ok;
     uint32_t cp_nb_tx_fail;
@@ -1380,8 +1374,6 @@ int main(int argc, char ** argv)
     float rx_ok_ratio;
     float rx_bad_ratio;
     float rx_nocrc_ratio;
-    float up_ack_ratio;
-    float dw_ack_ratio;
 
     /* Parse command line options */
     while( (i = getopt( argc, argv, "hc:" )) != -1 )
@@ -1552,10 +1544,7 @@ int main(int argc, char ** argv)
         cp_nb_rx_bad       = meas_nb_rx_bad;
         cp_nb_rx_nocrc     = meas_nb_rx_nocrc;
         cp_up_pkt_fwd      = meas_up_pkt_fwd;
-        cp_up_network_byte = meas_up_network_byte;
         cp_up_payload_byte = meas_up_payload_byte;
-        cp_up_dgram_sent   = meas_up_dgram_sent;
-        cp_up_ack_rcv      = meas_up_ack_rcv;
         meas_nb_rx_rcv = 0;
         meas_nb_rx_ok = 0;
         meas_nb_rx_bad = 0;
@@ -1575,18 +1564,10 @@ int main(int argc, char ** argv)
             rx_bad_ratio = 0.0;
             rx_nocrc_ratio = 0.0;
         }
-        if (cp_up_dgram_sent > 0) {
-            up_ack_ratio = (float)cp_up_ack_rcv / (float)cp_up_dgram_sent;
-        } else {
-            up_ack_ratio = 0.0;
-        }
 
         /* access downstream statistics, copy and reset them */
         pthread_mutex_lock(&mx_meas_dw);
-        cp_dw_pull_sent    =  meas_dw_pull_sent;
-        cp_dw_ack_rcv      =  meas_dw_ack_rcv;
         cp_dw_dgram_rcv    =  meas_dw_dgram_rcv;
-        cp_dw_network_byte =  meas_dw_network_byte;
         cp_dw_payload_byte =  meas_dw_payload_byte;
         cp_nb_tx_ok        =  meas_nb_tx_ok;
         cp_nb_tx_fail      =  meas_nb_tx_fail;
@@ -1614,11 +1595,6 @@ int main(int argc, char ** argv)
         meas_nb_beacon_sent = 0;
         meas_nb_beacon_rejected = 0;
         pthread_mutex_unlock(&mx_meas_dw);
-        if (cp_dw_pull_sent > 0) {
-            dw_ack_ratio = (float)cp_dw_ack_rcv / (float)cp_dw_pull_sent;
-        } else {
-            dw_ack_ratio = 0.0;
-        }
 
         /* access GPS statistics, copy them */
         if (gps_enabled == true) {
@@ -1639,11 +1615,7 @@ int main(int argc, char ** argv)
         printf("# RF packets received by concentrator: %u\n", cp_nb_rx_rcv);
         printf("# CRC_OK: %.2f%%, CRC_FAIL: %.2f%%, NO_CRC: %.2f%%\n", 100.0 * rx_ok_ratio, 100.0 * rx_bad_ratio, 100.0 * rx_nocrc_ratio);
         printf("# RF packets forwarded: %u (%u bytes)\n", cp_up_pkt_fwd, cp_up_payload_byte);
-        printf("# PUSH_DATA datagrams sent: %u (%u bytes)\n", cp_up_dgram_sent, cp_up_network_byte);
-        printf("# PUSH_DATA acknowledged: %.2f%%\n", 100.0 * up_ack_ratio);
         printf("### [DOWNSTREAM] ###\n");
-        printf("# PULL_DATA sent: %u (%.2f%% acknowledged)\n", cp_dw_pull_sent, 100.0 * dw_ack_ratio);
-        printf("# PULL_RESP(onse) datagrams received: %u (%u bytes)\n", cp_dw_dgram_rcv, cp_dw_network_byte);
         printf("# RF packets sent to concentrator: %u (%u bytes)\n", (cp_nb_tx_ok+cp_nb_tx_fail), cp_dw_payload_byte);
         printf("# TX errors: %u\n", cp_nb_tx_fail);
         if (cp_nb_tx_requested != 0 ) {
@@ -1702,9 +1674,9 @@ int main(int argc, char ** argv)
         /* generate a JSON report (will be sent to server by upstream thread) */
         pthread_mutex_lock(&mx_stat_rep);
         if (((gps_enabled == true) && (coord_ok == true)) || (gps_fake_enable == true)) {
-            snprintf(status_report, STATUS_SIZE, "\"stat\":{\"time\":\"%s\",\"lati\":%.5f,\"long\":%.5f,\"alti\":%i,\"rxnb\":%u,\"rxok\":%u,\"rxfw\":%u,\"ackr\":%.1f,\"dwnb\":%u,\"txnb\":%u,\"temp\":%.1f}", stat_timestamp, cp_gps_coord.lat, cp_gps_coord.lon, cp_gps_coord.alt, cp_nb_rx_rcv, cp_nb_rx_ok, cp_up_pkt_fwd, 100.0 * up_ack_ratio, cp_dw_dgram_rcv, cp_nb_tx_ok, temperature);
+            snprintf(status_report, STATUS_SIZE, "\"stat\":{\"time\":\"%s\",\"lati\":%.5f,\"long\":%.5f,\"alti\":%i,\"rxnb\":%u,\"rxok\":%u,\"rxfw\":%u,\"dwnb\":%u,\"txnb\":%u,\"temp\":%.1f}", stat_timestamp, cp_gps_coord.lat, cp_gps_coord.lon, cp_gps_coord.alt, cp_nb_rx_rcv, cp_nb_rx_ok, cp_up_pkt_fwd, cp_dw_dgram_rcv, cp_nb_tx_ok, temperature);
         } else {
-            snprintf(status_report, STATUS_SIZE, "\"stat\":{\"time\":\"%s\",\"rxnb\":%u,\"rxok\":%u,\"rxfw\":%u,\"ackr\":%.1f,\"dwnb\":%u,\"txnb\":%u,\"temp\":%.1f}", stat_timestamp, cp_nb_rx_rcv, cp_nb_rx_ok, cp_up_pkt_fwd, 100.0 * up_ack_ratio, cp_dw_dgram_rcv, cp_nb_tx_ok, temperature);
+            snprintf(status_report, STATUS_SIZE, "\"stat\":{\"time\":\"%s\",\"rxnb\":%u,\"rxok\":%u,\"rxfw\":%u,\"dwnb\":%u,\"txnb\":%u,\"temp\":%.1f}", stat_timestamp, cp_nb_rx_rcv, cp_nb_rx_ok, cp_up_pkt_fwd, cp_dw_dgram_rcv, cp_nb_tx_ok, temperature);
         }
         report_ready = true;
         pthread_mutex_unlock(&mx_stat_rep);
@@ -2268,10 +2240,8 @@ void thread_down(void) {
                     txpkt.datarate   = DR_LORA_SF7;
                     txpkt.coderate   = CR_LORA_4_5;
                 }
-
-
+		
 	        MSG("INFO: txpkt size is %u\n", txpkt.size);
-
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
 
                 /* End of Zaihan's code */
