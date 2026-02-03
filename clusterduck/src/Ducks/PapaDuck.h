@@ -4,7 +4,6 @@
 #include "Duck.h"
 #include "../CdpPacket.h"
 #include "../radio/duck_bridge.h"         // provides duck_register_rx_callback(...) for your sx1302_hal bridge
-//#include "../wifi/DuckWifi.h"
 
 template <typename RadioType = DuckLoRa>
 class PapaDuck : public Duck<RadioType> {

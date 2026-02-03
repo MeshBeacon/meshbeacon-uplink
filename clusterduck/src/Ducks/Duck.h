@@ -1,8 +1,6 @@
 #ifndef DUCK_H
 #define DUCK_H
 
-//#include <Arduino.h>
-//#include <ArduinoJson.h>
 #include "../utils/DuckError.h"
 #include "../include/cdpcfg.h"
 #include "../radio/DuckLoRa.h"
@@ -10,8 +8,6 @@
 #include "../utils/DuckUtils.h"
 #include <cassert>
 #include "../CdpPacket.h"
-//#include "../DuckEsp.h"
-//#include "../wifi/DuckWifiNone.h"
 #include "../routing/DuckRouter.h"
 #include "../routing/RouteJSON.h"
 

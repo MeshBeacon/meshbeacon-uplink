@@ -8,7 +8,7 @@ export
 
 .PHONY: all clean install install_conf libtools libloragw packet_forwarder util_net_downlink util_chip_id util_boot util_spectral_scan
 
-all: libtools libloragw packet_forwarder util_net_downlink util_chip_id util_boot util_spectral_scan
+all: libtools libloragw packet_forwarder util_net_downlink util_chip_id util_boot util_spectral_scan clusterduck
 
 libtools:
 	$(MAKE) all -e -C $@
