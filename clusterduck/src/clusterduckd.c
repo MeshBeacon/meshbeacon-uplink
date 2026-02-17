@@ -2085,21 +2085,9 @@ void thread_down(void) {
         buff_req[1] = token_h;
         buff_req[2] = token_l;
 
-        /* send PULL request and record time */
-        send(sock_down, (void *)buff_req, sizeof buff_req, 0);
-        clock_gettime(CLOCK_MONOTONIC, &send_time);
-        pthread_mutex_lock(&mx_meas_dw);
-        meas_dw_pull_sent += 1;
-        pthread_mutex_unlock(&mx_meas_dw);
-        autoquit_cnt++;
-
         /* listen to packets and process them until a new PULL request must be sent */
         recv_time = send_time;
         while (((int)difftimespec(recv_time, send_time) < keepalive_time) && !exit_sig && !quit_sig) {
-
-            /* try to receive a datagram */
-            msg_len = recv(sock_down, (void *)buff_down, (sizeof buff_down)-1, 0);
-            clock_gettime(CLOCK_MONOTONIC, &recv_time);
 
             /* Pre-allocate beacon slots in JiT queue, to check downlink collisions */
             beacon_loop = JIT_NUM_BEACON_IN_QUEUE - jit_queue[0].num_beacon;
@@ -2245,13 +2233,6 @@ void thread_down(void) {
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
 
                 /* End of Zaihan's code */
-
-                /* record measurement data */
-                pthread_mutex_lock(&mx_meas_dw);
-                meas_dw_dgram_rcv += 1; /* count only datagrams with no JSON errors */
-                meas_dw_network_byte += msg_len; /* meas_dw_network_byte */
-                meas_dw_payload_byte += txpkt.size;
-                pthread_mutex_unlock(&mx_meas_dw);
 
                 /* reset error/warning results */
                 jit_result = warning_result = JIT_ERROR_OK;
