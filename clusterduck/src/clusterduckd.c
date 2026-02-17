@@ -2078,11 +2078,9 @@ void thread_down(void) {
                                             &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
                                             &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
-            if (duck_rc == 0) {
-                /* buf_capacity now holds actual downlink payload size */
-                if (buf_capacity == 0) {
-                    // buffer too small; allocate larger buffer or handle error
-                } else {
+        if (duck_rc == 0 && buf_capacity > 0) {
+
+            MSG("INFO: ClusterDuck downlink received, size=%u\n", buf_capacity);
                     /* Build lgw_pkt_tx_s - field names vary by HAL version */
                     memset(&txpkt, 0, sizeof(txpkt));
 
@@ -2106,7 +2104,6 @@ void thread_down(void) {
                     txpkt.bandwidth  = BW_125KHZ;
                     txpkt.datarate   = DR_LORA_SF7;
                     txpkt.coderate   = CR_LORA_4_5;
-                }
 
 	        MSG("INFO: txpkt size is %u\n", txpkt.size);
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
