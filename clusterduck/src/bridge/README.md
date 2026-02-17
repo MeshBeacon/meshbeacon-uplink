@@ -237,22 +237,6 @@ Enable debug output by setting log level:
 
 ## Benefits of the Unified Bridge
 
-### Comparison: Before vs After
-
-#### Before (Old Scattered Architecture)
-```
-❌ 4 files across 2 directories (260 lines total)
-   - src/radio/duck_bridge.h (60 lines)
-   - src/radio/duck_bridge.cpp (120 lines)
-   - src/forwarder/DuckForwarderBridge.h (30 lines)
-   - src/forwarder/DuckForwarderBridge.cpp (50 lines)
-❌ Confusing naming (duck_bridge vs DuckForwarderBridge)
-❌ Two separate mechanisms doing similar things
-❌ Difficult to understand data flow
-❌ No built-in statistics or diagnostics
-```
-
-#### After (New Unified Architecture)
 ```
 ✅ 2 files in 1 directory (456 lines total)
    - src/bridge/ClusterDuckBridge.h (206 lines)
@@ -373,23 +357,6 @@ For questions or issues:
 4. Open an issue in the repository
 
 ---
-
-**Last Updated:** February 18, 2026  
-**Version:** 2.0 (Unified Bridge)  
-**Maintainer:** ClusterDuck Protocol Team
-- [ ] Support multiple simultaneous uplink consumers
-- [ ] Add configuration for queue sizes
-- [ ] Implement packet filtering and routing rules
-
-## Backward Compatibility
-
-The `duck_bridge_compat.h` file provides 100% backward compatibility with the old API. Existing code will continue to work without modifications. However, new code should use the new API for better clarity and maintainability.
-
-### Timeline
-- **Phase 1** (Current): Both old and new APIs available
-- **Phase 2** (3 months): Deprecation warnings for old API
-- **Phase 3** (6 months): Remove old files, keep compatibility header
-- **Phase 4** (12 months): Remove compatibility header (breaking change)
 
 ## Support
 
