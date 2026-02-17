@@ -68,3 +68,8 @@ extern "C" void* hub_init_and_setup(void) {
     printf("[HUB] ClusterDuck Protocol initialized successfully\n");
     return (void*)&hub;
 }
+
+// C wrapper to call the hub's main processing loop
+extern "C" void hub_run_loop(void) {
+    hub.main();
+}

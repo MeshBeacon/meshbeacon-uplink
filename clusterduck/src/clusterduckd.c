@@ -63,6 +63,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 extern "C" {
 #endif
     extern void* hub_init_and_setup(void);  /* Initialize and setup the PapaDuck hub */
+    extern void hub_run_loop(void);         /* Run the hub's main processing loop */
 #ifdef __cplusplus
 }
 #endif
@@ -317,6 +318,7 @@ void thread_jit(void);
 void thread_gps(void);
 void thread_valid(void);
 void thread_spectral_scan(void);
+void thread_duck(void);  /* ClusterDuck processing */
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE FUNCTIONS DEFINITION ----------------------------------------- */
@@ -1346,6 +1348,7 @@ int main(int argc, char ** argv)
     pthread_t thrid_valid;
     pthread_t thrid_jit;
     pthread_t thrid_ss;
+    pthread_t thrid_duck;  /* ClusterDuck processing thread */
 
     /* variables to get local copies of measurements */
     uint32_t cp_nb_rx_rcv;
@@ -1512,6 +1515,11 @@ int main(int argc, char ** argv)
     i = pthread_create(&thrid_jit, NULL, (void * (*)(void *))thread_jit, NULL);
     if (i != 0) {
         MSG("ERROR: [main] impossible to create JIT thread\n");
+        exit(EXIT_FAILURE);
+    }
+    i = pthread_create(&thrid_duck, NULL, (void * (*)(void *))thread_duck, NULL);
+    if (i != 0) {
+        MSG("ERROR: [main] impossible to create ClusterDuck processing thread\n");
         exit(EXIT_FAILURE);
     }
 
@@ -2764,6 +2772,24 @@ void thread_spectral_scan(void) {
         }
     }
     printf("\nINFO: End of Spectral Scan thread\n");
+}
+
+/* -------------------------------------------------------------------------- */
+/* --- THREAD: CLUSTERDUCK PROTOCOL PROCESSING ------------------------------ */
+
+void thread_duck(void) {
+    MSG("INFO: ClusterDuck processing thread started\n");
+    
+    /* Main loop: call hub.main() to process ClusterDuck packets */
+    while (!exit_sig && !quit_sig) {
+        /* Call the ClusterDuck main loop to process received packets */
+        hub_run_loop();
+        
+        /* Small delay to avoid consuming too much CPU */
+        wait_ms(10);
+    }
+    
+    MSG("\nINFO: End of ClusterDuck processing thread\n");
 }
 
 /* --- EOF ------------------------------------------------------------------ */
