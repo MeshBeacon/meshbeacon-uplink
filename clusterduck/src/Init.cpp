@@ -1,6 +1,11 @@
 #include <CDP.h>
 #include <queue>
 
+// Forward declare C functions for MQTT publishing
+extern "C" {
+    void mqtt_publish_message(const char* topic, const char* message, int length);
+}
+
 // --- Global Objects ---
 PapaDuck hub("PAPADUCK");
 
@@ -42,6 +47,9 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     std::string jsonstat;
     serializeJson(doc, jsonstat);
     printf("%s\n",jsonstat.c_str());
+    
+    // Publish to MQTT if enabled
+    mqtt_publish_message("", jsonstat.c_str(), jsonstat.length());
 }
 
 // The callback method simply takes the incoming packet and

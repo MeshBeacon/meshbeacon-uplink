@@ -56,6 +56,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include "loragw_aux.h"
 #include "loragw_reg.h"
 #include "loragw_gps.h"
+#include <MQTTClient.h>
 #include "radio/duck_bridge.h"   // add this near the other includes; ensure the compiler include path finds it
 
 /* ClusterDuck Protocol initialization */
@@ -173,6 +174,22 @@ static int keepalive_time = DEFAULT_KEEPALIVE; /* send a PULL_DATA request every
 
 /* statistics collection configuration variables */
 static unsigned stat_interval = DEFAULT_STAT; /* time interval (in sec) at which statistics are collected and displayed */
+
+/* MQTT library */
+static MQTTClient mqtt_client = NULL;
+
+/* MQTT configuration variables */
+static bool mqtt_enabled = false; /* MQTT publishing enabled */
+static char mqtt_server[128] = ""; /* MQTT broker address */
+static int mqtt_port = 1883; /* MQTT broker port */
+static char mqtt_client_id[64] = "papa-duck-gateway-1"; /* MQTT client ID */
+static char mqtt_username[64] = ""; /* MQTT username */
+static char mqtt_password[64] = ""; /* MQTT password */
+static char mqtt_pub_topic[128] = "hub/event"; /* MQTT publish topic */
+static char mqtt_sub_topic[128] = "incoming/say_hello"; /* MQTT subscribe topic */
+static int mqtt_keepalive = 60; /* MQTT keepalive interval */
+static bool mqtt_use_tls = false; /* Use TLS for MQTT */
+static char mqtt_ca_cert_file[256] = ""; /* CA certificate file path */
 
 /* gateway <-> MAC protocol variables */
 static uint32_t net_mac_h; /* Most Significant Nibble, network order */
@@ -299,6 +316,8 @@ static int parse_SX130x_configuration(const char * conf_file);
 
 static int parse_gateway_configuration(const char * conf_file);
 
+static int parse_mqtt_configuration(const char * conf_file);
+
 static int parse_debug_configuration(const char * conf_file);
 
 static uint16_t crc16(const uint8_t * data, unsigned size);
@@ -319,6 +338,29 @@ void thread_gps(void);
 void thread_valid(void);
 void thread_spectral_scan(void);
 void thread_duck(void);  /* ClusterDuck processing */
+
+/* MQTT Publishing function */
+void mqtt_publish_message(const char* topic, const char* message, int length) {
+    if (!mqtt_enabled) {
+        return; // MQTT disabled, skip
+    }
+    
+    // Use configured topic if empty topic provided
+    const char* pub_topic = (topic && strlen(topic) > 0) ? topic : mqtt_pub_topic;
+    
+    MSG("[MQTT] Publishing to topic: %s\n", pub_topic);
+    MSG("[MQTT] Message (%d bytes): %s\n", length, message);
+    
+    // TODO: Integrate actual MQTT library (e.g., Paho MQTT C)
+    // For now, just log to console and file
+    // Example integration:
+    MQTTClient_message pubmsg = MQTTClient_message_initializer;
+    pubmsg.payload = (void*)message;
+    pubmsg.payloadlen = length;
+    pubmsg.qos = 1;
+    pubmsg.retained = 0;
+    MQTTClient_publishMessage(mqtt_client, pub_topic, &pubmsg, NULL);
+}
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE FUNCTIONS DEFINITION ----------------------------------------- */
@@ -1229,6 +1271,125 @@ static int parse_gateway_configuration(const char * conf_file) {
     return 0;
 }
 
+static int parse_mqtt_configuration(const char * conf_file) {
+    const char conf_obj_name[] = "mqtt_conf";
+    JSON_Value *root_val;
+    JSON_Object *conf_obj = NULL;
+    JSON_Value *val = NULL;
+    const char *str;
+
+    /* try to parse JSON */
+    root_val = json_parse_file_with_comments(conf_file);
+    if (root_val == NULL) {
+        MSG("ERROR: %s is not a valid JSON file\n", conf_file);
+        exit(EXIT_FAILURE);
+    }
+
+    /* point to the MQTT configuration object */
+    conf_obj = json_object_get_object(json_value_get_object(root_val), conf_obj_name);
+    if (conf_obj == NULL) {
+        MSG("INFO: %s does not contain a JSON object named %s, MQTT disabled\n", conf_file, conf_obj_name);
+        json_value_free(root_val);
+        return -1;
+    } else {
+        MSG("INFO: %s does contain a JSON object named %s, parsing MQTT parameters\n", conf_file, conf_obj_name);
+    }
+
+    /* MQTT enabled (optional) */
+    val = json_object_get_value(conf_obj, "enabled");
+    if (json_value_get_type(val) == JSONBoolean) {
+        mqtt_enabled = (bool)json_value_get_boolean(val);
+        if (mqtt_enabled == true) {
+            MSG("INFO: MQTT is enabled\n");
+        } else {
+            MSG("INFO: MQTT is disabled\n");
+            json_value_free(root_val);
+            return 0;
+        }
+    }
+
+    /* MQTT server address (required if enabled) */
+    str = json_object_get_string(conf_obj, "server");
+    if (str != NULL) {
+        strncpy(mqtt_server, str, sizeof mqtt_server);
+        mqtt_server[sizeof mqtt_server - 1] = '\0';
+        MSG("INFO: MQTT server is configured to \"%s\"\n", mqtt_server);
+    }
+
+    /* MQTT port (optional) */
+    val = json_object_get_value(conf_obj, "port");
+    if (val != NULL) {
+        mqtt_port = (int)json_value_get_number(val);
+        MSG("INFO: MQTT port is configured to %d\n", mqtt_port);
+    }
+
+    /* MQTT client ID (optional) */
+    str = json_object_get_string(conf_obj, "client_id");
+    if (str != NULL) {
+        strncpy(mqtt_client_id, str, sizeof mqtt_client_id);
+        mqtt_client_id[sizeof mqtt_client_id - 1] = '\0';
+        MSG("INFO: MQTT client ID is configured to \"%s\"\n", mqtt_client_id);
+    }
+
+    /* MQTT username (optional) */
+    str = json_object_get_string(conf_obj, "username");
+    if (str != NULL && strlen(str) > 0) {
+        strncpy(mqtt_username, str, sizeof mqtt_username);
+        mqtt_username[sizeof mqtt_username - 1] = '\0';
+        MSG("INFO: MQTT username is configured\n");
+    }
+
+    /* MQTT password (optional) */
+    str = json_object_get_string(conf_obj, "password");
+    if (str != NULL && strlen(str) > 0) {
+        strncpy(mqtt_password, str, sizeof mqtt_password);
+        mqtt_password[sizeof mqtt_password - 1] = '\0';
+        MSG("INFO: MQTT password is configured\n");
+    }
+
+    /* MQTT publish topic (optional) */
+    str = json_object_get_string(conf_obj, "pub_topic");
+    if (str != NULL) {
+        strncpy(mqtt_pub_topic, str, sizeof mqtt_pub_topic);
+        mqtt_pub_topic[sizeof mqtt_pub_topic - 1] = '\0';
+        MSG("INFO: MQTT publish topic is configured to \"%s\"\n", mqtt_pub_topic);
+    }
+
+    /* MQTT subscribe topic (optional) */
+    str = json_object_get_string(conf_obj, "sub_topic");
+    if (str != NULL) {
+        strncpy(mqtt_sub_topic, str, sizeof mqtt_sub_topic);
+        mqtt_sub_topic[sizeof mqtt_sub_topic - 1] = '\0';
+        MSG("INFO: MQTT subscribe topic is configured to \"%s\"\n", mqtt_sub_topic);
+    }
+
+    /* MQTT keepalive (optional) */
+    val = json_object_get_value(conf_obj, "keepalive");
+    if (val != NULL) {
+        mqtt_keepalive = (int)json_value_get_number(val);
+        MSG("INFO: MQTT keepalive is configured to %d seconds\n", mqtt_keepalive);
+    }
+
+    /* MQTT TLS (optional) */
+    val = json_object_get_value(conf_obj, "use_tls");
+    if (json_value_get_type(val) == JSONBoolean) {
+        mqtt_use_tls = (bool)json_value_get_boolean(val);
+        MSG("INFO: MQTT TLS is %s\n", mqtt_use_tls ? "enabled" : "disabled");
+    }
+
+    /* MQTT CA certificate file (optional) */
+    str = json_object_get_string(conf_obj, "ca_cert_file");
+    if (str != NULL && strlen(str) > 0) {
+        strncpy(mqtt_ca_cert_file, str, sizeof mqtt_ca_cert_file);
+        mqtt_ca_cert_file[sizeof mqtt_ca_cert_file - 1] = '\0';
+        MSG("INFO: MQTT CA certificate file is configured to \"%s\"\n", mqtt_ca_cert_file);
+    }
+
+    /* free JSON parsing data structure */
+    json_value_free(root_val);
+    return 0;
+}
+
 static int parse_debug_configuration(const char * conf_file) {
     int i;
     const char conf_obj_name[] = "debug_conf";
@@ -1431,6 +1592,10 @@ int main(int argc, char ** argv)
         x = parse_gateway_configuration(conf_fname);
         if (x != 0) {
             exit(EXIT_FAILURE);
+        }
+        x = parse_mqtt_configuration(conf_fname);
+        if (x != 0) {
+            MSG("INFO: no MQTT configuration or MQTT disabled\n");
         }
         x = parse_debug_configuration(conf_fname);
         if (x != 0) {

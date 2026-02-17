@@ -32,7 +32,7 @@ CC := $(CROSS_COMPILE)gcc
 AR := $(CROSS_COMPILE)ar
 CXX := $(CROSS_COMPILE)g++
 # C compiler flags (add ClusterDuck include path so duck_bridge.h is found)
-CFLAGS := -O2 -Wall -Wextra -std=c99 -Iinc -I. -I../libtools/inc -I$(CLUSTERDUCK_PATH)/src
+CFLAGS := -O2 -Wall -Wextra -std=c99 -Iinc -I. -I../libtools/inc -I$(CLUSTERDUCK_PATH)/src -I$(CLUSTERDUCK_PATH)/inc/paho.mqtt.c
 # C++ compiler flags for duck_bridge.cpp
 # Add -DAS923_RADIO to match the global_conf.json frequency configuration (920-923 MHz)
 CXXFLAGS := -O2 -Wall -Wextra -std=gnu++17 -DAS923_RADIO -I$(CLUSTERDUCK_PATH)/src -I$(LGW_PATH)/inc -I../libtools/inc
@@ -51,7 +51,7 @@ LGW_INC += $(LGW_PATH)/inc/loragw_hal.h
 
 ### Linking options
 
-LIBS := -lloragw -ltinymt32 -lparson -lbase64 -lrt -lpthread -lm
+LIBS := -lloragw -ltinymt32 -lparson -lbase64 -lrt -lpthread -lm -lpaho-mqtt3c
 
 ### General build targets
 
@@ -120,7 +120,7 @@ $(OBJDIR)/$(APP_NAME).o: src/$(APP_NAME).c $(LGW_INC) $(INCLUDES) | $(OBJDIR)
 
 # Link with g++ to ensure proper linking of C++ runtime (duck_bridge.o uses C++)
 # Add $(OBJDIR)/duck_bridge.o into the link line.
-$(APP_NAME): $(OBJDIR)/$(APP_NAME).o $(LGW_PATH)/libloragw.a $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o
-	$(CXX) -L$(LGW_PATH) -L$(LIB_PATH) $< $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o -o $@ $(LIBS)
+$(APP_NAME): $(OBJDIR)/$(APP_NAME).o $(LGW_PATH)/libloragw.a $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o 
+	$(CXX) -L$(LGW_PATH) -L$(LIB_PATH) $< $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o $(MQTT_OBJS) -o $@ $(LIBS)
 
 ### EOF
