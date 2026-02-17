@@ -488,9 +488,12 @@ static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
 
     loginfo_ln("duck_rx_from_forwarder_cb(): payload: %s", duckutils::toString(payload, size).c_str());
 
-    // Push the payload into the bridge so DuckLoRa::readReceivedData() can pick it up
-    cdp_bridge_handle_uplink(payload, size, rssi, snr, freq_hz, tmst, rf_chain,
-                             bandwidth_hz, datarate_sf, coderate);
+    // Store the packet in the bridge for readReceivedData() to pick up
+    // Use the C++ API to push directly to the polling buffer
+    std::vector<uint8_t> packet(payload, payload + size);
+    cdp_bridge::push_uplink_packet(packet);
+    
+    loginfo_ln("duck_rx_from_forwarder_cb(): packet stored in bridge for polling");
 }
 
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {

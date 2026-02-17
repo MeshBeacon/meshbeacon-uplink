@@ -34,8 +34,7 @@ CXX := $(CROSS_COMPILE)g++
 # C compiler flags (add ClusterDuck include path so duck_bridge.h is found)
 CFLAGS := -O2 -Wall -Wextra -std=c99 -Iinc -I. -I../libtools/inc -I$(CLUSTERDUCK_PATH)/src -I$(CLUSTERDUCK_PATH)/inc/paho.mqtt.c
 # C++ compiler flags for duck_bridge.cpp
-# Add -DAS923_RADIO to match the global_conf.json frequency configuration (920-923 MHz)
-CXXFLAGS := -O2 -Wall -Wextra -std=gnu++17 -DAS923_RADIO -I$(CLUSTERDUCK_PATH)/src -I$(LGW_PATH)/inc -I../libtools/inc
+CXXFLAGS := -O2 -Wall -Wextra -std=gnu++17 -I$(CLUSTERDUCK_PATH)/src -I$(LGW_PATH)/inc -I../libtools/inc
 
 VFLAG := -D VERSION_STRING="\"$(RELEASE_VERSION)\""
 
