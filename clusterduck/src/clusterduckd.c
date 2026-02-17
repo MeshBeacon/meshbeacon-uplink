@@ -2780,6 +2780,10 @@ void thread_spectral_scan(void) {
 void thread_duck(void) {
     MSG("INFO: ClusterDuck processing thread started\n");
     
+    /* Give other threads time to initialize */
+    wait_ms(1000);
+    MSG("INFO: ClusterDuck thread starting main loop\n");
+    
     /* Main loop: call hub.main() to process ClusterDuck packets */
     while (!exit_sig && !quit_sig) {
         /* Call the ClusterDuck main loop to process received packets */

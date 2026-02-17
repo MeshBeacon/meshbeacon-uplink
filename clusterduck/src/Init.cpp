@@ -71,5 +71,12 @@ extern "C" void* hub_init_and_setup(void) {
 
 // C wrapper to call the hub's main processing loop
 extern "C" void hub_run_loop(void) {
-    hub.main();
+    try {
+        // Process any received packets
+        hub.processPackets();
+    } catch (const std::exception& e) {
+        printf("[HUB] ERROR in packet processing: %s\n", e.what());
+    } catch (...) {
+        printf("[HUB] ERROR: Unknown exception in packet processing\n");
+    }
 }

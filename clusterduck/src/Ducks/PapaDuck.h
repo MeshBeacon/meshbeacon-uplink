@@ -37,7 +37,23 @@ public:
    * @returns DUCK_ERR_NONE if successful, error code otherwise
    */
   int begin(const LoRaConfigParams& config = RadioType::defaultRadioParams) {
-    return this->setupLoRaRadio(config);
+    int err = this->setupLoRaRadio(config);
+    if (err == DUCK_ERR_NONE) {
+      // PapaDuck is always PUBLIC (gateway mode), skip network search
+      this->router.setNetworkState(NetworkState::PUBLIC);
+      loginfo_ln("[PAPADUCK] Network state set to PUBLIC (gateway mode)");
+    }
+    return err;
+  }
+
+  /**
+   * @brief Process any received packets
+   * This is a simplified version of main() that skips network joining logic
+   */
+  void processPackets() {
+    if (this->duckRadio.getReceiveFlag()) {
+      this->handleReceivedPacket();
+    }
   }
 
   //remove this when mqtt quack pack is added
