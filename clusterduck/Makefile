@@ -116,6 +116,6 @@ $(OBJDIR)/$(APP_NAME).o: src/$(APP_NAME).c $(LGW_INC) $(INCLUDES) | $(OBJDIR)
 # Link with g++ to ensure proper linking of C++ runtime (duck_bridge.o uses C++)
 # Add $(OBJDIR)/duck_bridge.o into the link line.
 $(APP_NAME): $(OBJDIR)/$(APP_NAME).o $(LGW_PATH)/libloragw.a $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o
-	$(CXX) -L$(LGW_PATH) -L$(LIB_PATH) $< $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o -o $@ $(LIBS)
+	$(CXX) -L$(LGW_PATH) -L$(LIB_PATH) $< $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o -o $@ $(LIBS)
 
 ### EOF
