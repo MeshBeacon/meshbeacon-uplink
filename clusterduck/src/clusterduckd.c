@@ -58,6 +58,15 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include "loragw_gps.h"
 #include "radio/duck_bridge.h"   // add this near the other includes; ensure the compiler include path finds it
 
+/* ClusterDuck Protocol initialization */
+#ifdef __cplusplus
+extern "C" {
+#endif
+    extern void* hub_init_and_setup(void);  /* Initialize and setup the PapaDuck hub */
+#ifdef __cplusplus
+}
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE MACROS ------------------------------------------------------- */
 
@@ -1479,6 +1488,15 @@ int main(int argc, char ** argv)
     } else {
         printf("INFO: concentrator EUI: 0x%016" PRIx64 "\n", eui);
     }
+
+    /* Initialize ClusterDuck Protocol */
+    MSG("INFO: [main] Initializing ClusterDuck Protocol\n");
+    void* hub_ptr = hub_init_and_setup();
+    if (hub_ptr == NULL) {
+        MSG("ERROR: [main] failed to initialize ClusterDuck Protocol\n");
+        exit(EXIT_FAILURE);
+    }
+    MSG("INFO: [main] ClusterDuck Protocol initialized successfully\n");
 
     /* spawn threads to manage upstream and downstream */
     i = pthread_create(&thrid_up, NULL, (void * (*)(void *))thread_up, NULL);

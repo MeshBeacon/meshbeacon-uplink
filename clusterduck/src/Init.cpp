@@ -50,3 +50,21 @@ void handleDuckData(CdpPacket receivedPacket) {
   printf("[HUB] got packet\n");
   processMessageFromDucks(receivedPacket);
 }
+
+// C wrapper for initialization and setup
+extern "C" void* hub_init_and_setup(void) {
+    printf("[HUB] Initializing ClusterDuck Protocol...\n");
+    
+    // Set up the LoRa radio (this will register callbacks)
+    int err = hub.setupLoRaRadio();
+    if (err != DUCK_ERR_NONE) {
+        printf("[HUB] ERROR: Failed to setup LoRa radio, err=%d\n", err);
+        return nullptr;
+    }
+    
+    // Set the receive callback
+    hub.onReceiveDuckData(handleDuckData);
+    
+    printf("[HUB] ClusterDuck Protocol initialized successfully\n");
+    return (void*)&hub;
+}
