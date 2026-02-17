@@ -483,6 +483,10 @@ static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
                                       uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
                                       uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
 {
+    printf("[DUCK_RX_CB] Callback invoked: size=%d rssi=%d snr=%.2f freq=%u\n", 
+           size, rssi, snr, freq_hz);
+    fflush(stdout);
+    
     loginfo_ln("duck_rx_from_forwarder_cb(): pkt size=%d rssi=%d snr=%.2f freq=%u tmst=%u if=%u bw=%u sf=%u cr=%u",
                size, rssi, snr, freq_hz, tmst, rf_chain, bandwidth_hz, datarate_sf, coderate);
 
@@ -492,6 +496,9 @@ static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
     // Use the C++ API to push directly to the polling buffer
     std::vector<uint8_t> packet(payload, payload + size);
     cdp_bridge::push_uplink_packet(packet);
+    
+    printf("[DUCK_RX_CB] Packet stored in bridge for polling\n");
+    fflush(stdout);
     
     loginfo_ln("duck_rx_from_forwarder_cb(): packet stored in bridge for polling");
 }

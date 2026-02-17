@@ -55,8 +55,16 @@ public:
    * This is a simplified version of main() that skips network joining logic
    */
   void processPackets() {
+    static int check_count = 0;
+    check_count++;
+    
     // Check if we have packets from the forwarder bridge (SX1302 HAL) using unified API
     bool has_bridge_packet = cdp_bridge::has_uplink_packet();
+    
+    // Log every 100 checks (every second at 10ms intervals)
+    if (check_count % 100 == 0) {
+      printf("[PAPADUCK] Checked %d times, has_bridge_packet=%d\n", check_count, has_bridge_packet);
+    }
     
     if (this->duckRadio.getReceiveFlag() || has_bridge_packet) {
       if (has_bridge_packet) {
