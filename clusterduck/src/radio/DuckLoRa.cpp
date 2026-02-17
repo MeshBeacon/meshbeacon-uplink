@@ -86,6 +86,7 @@ int DuckLoRa::checkLoRaParameters(LoRaConfigParams config) { //this can be impro
 
 int DuckLoRa::setupRadio(const LoRaConfigParams &config) {
     loginfo_ln("Setting up RADIOLIB LoRa radio...");
+    printf("[DuckLoRa] ===== SETUPRADIO CALLED =====\n");
     int rc;
     rc = checkLoRaParameters(config);
     if (rc != DUCK_ERR_NONE) {

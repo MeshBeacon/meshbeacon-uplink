@@ -37,11 +37,15 @@ public:
    * @returns DUCK_ERR_NONE if successful, error code otherwise
    */
   int begin(const LoRaConfigParams& config = RadioType::defaultRadioParams) {
+    printf("[PAPADUCK] begin() called, about to call setupLoRaRadio()\n");
     int err = this->setupLoRaRadio(config);
+    printf("[PAPADUCK] setupLoRaRadio() returned: %d\n", err);
     if (err == DUCK_ERR_NONE) {
       // PapaDuck is always PUBLIC (gateway mode), skip network search
       this->router.setNetworkState(NetworkState::PUBLIC);
       loginfo_ln("[PAPADUCK] Network state set to PUBLIC (gateway mode)");
+    } else {
+      printf("[PAPADUCK] ERROR: setupLoRaRadio() failed with error: %d\n", err);
     }
     return err;
   }
