@@ -1800,58 +1800,6 @@ int main(int argc, char ** argv)
             cp_gps_coord = reference_coord;
         }
 
-        /* display a report */
-        printf("\n##### %s #####\n", stat_timestamp);
-        printf("### [UPSTREAM] ###\n");
-        printf("# RF packets received by concentrator: %u\n", cp_nb_rx_rcv);
-        printf("# CRC_OK: %.2f%%, CRC_FAIL: %.2f%%, NO_CRC: %.2f%%\n", 100.0 * rx_ok_ratio, 100.0 * rx_bad_ratio, 100.0 * rx_nocrc_ratio);
-        printf("# RF packets forwarded: %u (%u bytes)\n", cp_up_pkt_fwd, cp_up_payload_byte);
-        printf("### [DOWNSTREAM] ###\n");
-        printf("# RF packets sent to concentrator: %u (%u bytes)\n", (cp_nb_tx_ok+cp_nb_tx_fail), cp_dw_payload_byte);
-        printf("# TX errors: %u\n", cp_nb_tx_fail);
-        if (cp_nb_tx_requested != 0 ) {
-            printf("# TX rejected (collision packet): %.2f%% (req:%u, rej:%u)\n", 100.0 * cp_nb_tx_rejected_collision_packet / cp_nb_tx_requested, cp_nb_tx_requested, cp_nb_tx_rejected_collision_packet);
-            printf("# TX rejected (collision beacon): %.2f%% (req:%u, rej:%u)\n", 100.0 * cp_nb_tx_rejected_collision_beacon / cp_nb_tx_requested, cp_nb_tx_requested, cp_nb_tx_rejected_collision_beacon);
-            printf("# TX rejected (too late): %.2f%% (req:%u, rej:%u)\n", 100.0 * cp_nb_tx_rejected_too_late / cp_nb_tx_requested, cp_nb_tx_requested, cp_nb_tx_rejected_too_late);
-            printf("# TX rejected (too early): %.2f%% (req:%u, rej:%u)\n", 100.0 * cp_nb_tx_rejected_too_early / cp_nb_tx_requested, cp_nb_tx_requested, cp_nb_tx_rejected_too_early);
-        }
-        printf("### SX1302 Status ###\n");
-        pthread_mutex_lock(&mx_concent);
-        i  = lgw_get_instcnt(&inst_tstamp);
-        i |= lgw_get_trigcnt(&trig_tstamp);
-        pthread_mutex_unlock(&mx_concent);
-        if (i != LGW_HAL_SUCCESS) {
-            printf("# SX1302 counter unknown\n");
-        } else {
-            printf("# SX1302 counter (INST): %u\n", inst_tstamp);
-            printf("# SX1302 counter (PPS):  %u\n", trig_tstamp);
-        }
-        printf("# BEACON queued: %u\n", cp_nb_beacon_queued);
-        printf("# BEACON sent so far: %u\n", cp_nb_beacon_sent);
-        printf("# BEACON rejected: %u\n", cp_nb_beacon_rejected);
-        printf("### [JIT] ###\n");
-        /* get timestamp captured on PPM pulse  */
-        jit_print_queue (&jit_queue[0], false, DEBUG_LOG);
-        printf("#--------\n");
-        jit_print_queue (&jit_queue[1], false, DEBUG_LOG);
-        printf("### [GPS] ###\n");
-        if (gps_enabled == true) {
-            /* no need for mutex, display is not critical */
-            if (gps_ref_valid == true) {
-                printf("# Valid time reference (age: %li sec)\n", (long)difftime(time(NULL), time_reference_gps.systime));
-            } else {
-                printf("# Invalid time reference (age: %li sec)\n", (long)difftime(time(NULL), time_reference_gps.systime));
-            }
-            if (coord_ok == true) {
-                printf("# GPS coordinates: latitude %.5f, longitude %.5f, altitude %i m\n", cp_gps_coord.lat, cp_gps_coord.lon, cp_gps_coord.alt);
-            } else {
-                printf("# no valid GPS coordinates available yet\n");
-            }
-        } else if (gps_fake_enable == true) {
-            printf("# GPS *FAKE* coordinates: latitude %.5f, longitude %.5f, altitude %i m\n", cp_gps_coord.lat, cp_gps_coord.lon, cp_gps_coord.alt);
-        } else {
-            printf("# GPS sync is disabled\n");
-        }
         pthread_mutex_lock(&mx_concent);
         i = lgw_get_temperature(&temperature);
         pthread_mutex_unlock(&mx_concent);
@@ -1860,7 +1808,6 @@ int main(int argc, char ** argv)
         } else {
             printf("### Concentrator temperature: %.0f C ###\n", temperature);
         }
-        printf("##### END #####\n");
 
         /* generate a JSON report (will be sent to server by upstream thread) */
         pthread_mutex_lock(&mx_stat_rep);
