@@ -260,7 +260,8 @@ std::optional<std::vector<uint8_t>> pop_uplink_packet() {
 }
 
 void push_uplink_packet(const std::vector<uint8_t>& payload) {
-    std::lock_guard<std::mutex> lock(g_bridge.uplink_mutex);
+    // NOTE: Do NOT lock uplink_mutex here - it's already locked by the caller
+    // (cdp_bridge_handle_uplink) when this is called from the callback
     g_bridge.uplink_packet = payload;
     printf("[CDP_BRIDGE] Pushed uplink packet for testing: size=%zu\n", payload.size());
 }
