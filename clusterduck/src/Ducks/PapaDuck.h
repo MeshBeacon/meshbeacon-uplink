@@ -3,7 +3,7 @@
 
 #include "Duck.h"
 #include "../CdpPacket.h"
-#include "../bridge/duck_bridge_compat.h"  // Unified bridge with backward compatibility
+#include "../bridge/ClusterDuckBridge.h"  // Unified bridge C++ API
 
 template <typename RadioType = DuckLoRa>
 class PapaDuck : public Duck<RadioType> {
@@ -56,7 +56,7 @@ public:
    */
   void processPackets() {
     // Check if we have packets from the forwarder bridge (SX1302 HAL) using unified API
-    bool has_bridge_packet = duck_forwarder_bridge::has_uplink_packet();
+    bool has_bridge_packet = cdp_bridge::has_uplink_packet();
     
     if (this->duckRadio.getReceiveFlag() || has_bridge_packet) {
       if (has_bridge_packet) {

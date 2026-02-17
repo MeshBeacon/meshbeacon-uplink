@@ -57,7 +57,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include "loragw_reg.h"
 #include "loragw_gps.h"
 #include <MQTTClient.h>
-#include "bridge/duck_bridge_compat.h"   // Unified bridge with backward compatibility
+#include "bridge/ClusterDuckBridge.h"   // Unified bridge C API
 
 /* ClusterDuck Protocol initialization */
 #ifdef __cplusplus
@@ -2055,10 +2055,10 @@ void thread_up(void) {
             // Pass packet to ClusterDuck bridge
             MSG("INFO: [%d/%d] Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
                        i+1, nb_pkt, size, rssi, snr);
-            duck_handle_gateway_rx(payload, size,
-                                   rssi, snr,
-                                   freq_hz, tmst, rf_chain,
-                                   bandwidth_hz, datarate_sf, coderate);
+            cdp_bridge_handle_uplink(payload, size,
+                                     rssi, snr,
+                                     freq_hz, tmst, rf_chain,
+                                     bandwidth_hz, datarate_sf, coderate);
         }
 
     }
@@ -2271,9 +2271,9 @@ void thread_down(void) {
 
 
             /* Try to pop a downlink from ClusterDuck */
-            int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
-                                            &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
-                                            &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
+            int duck_rc = cdp_bridge_pop_downlink(duck_payload_buf, &buf_capacity,
+                                                   &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
+                                                   &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
         if (duck_rc == 0 && buf_capacity > 0) {
 

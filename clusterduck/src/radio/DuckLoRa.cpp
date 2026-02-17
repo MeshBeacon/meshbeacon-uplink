@@ -1,10 +1,22 @@
 #include "DuckLoRa.h"
-#include "../bridge/duck_bridge_compat.h"
+#include "../bridge/ClusterDuckBridge.h"
 #include "../utils/DuckUtils.h"
 
 #ifdef CDPCFG_RADIO_SX1262
-#define DUCK_RADIO_IRQ_TIMEOUT RADIOLIB_SX126X_IRQ_TIMEOUT
-#define DUCK_RADIO_IRQ_TX_DONE RADIOLIB_SX126X_IRQ_TX_DONE
+#define DUCK_RADIO_IRQ_TIMEOUT RADIOLIB_SX126X_IRQ_TIMEstd::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() {
+    std::vector<uint8_t> packetBytes;
+
+    if (!isSetup) {
+        logerr_ln("ERROR  LoRa radio not setup %s\n", DUCKLORA_ERR_NOT_INITIALIZED);
+        return std::nullopt;
+    }
+
+    // Check if the forwarder provided a packet via the unified bridge
+    auto forwarderPkt = cdp_bridge::pop_uplink_packet();
+    if (forwarderPkt.has_value()) {
+        packetBytes = std::move(forwarderPkt.value());
+        loginfo_ln("readReceivedData(): got packet from forwarder bridge size=%d", (int)packetBytes.size());
+    } else {_RADIO_IRQ_TX_DONE RADIOLIB_SX126X_IRQ_TX_DONE
 #define DUCK_RADIO_IRQ_RX_DONE RADIOLIB_SX126X_IRQ_RX_DONE
 #define DUCK_RADIO_IRQ_CRC_ERROR RADIOLIB_SX126X_IRQ_CRC_ERR
 #define DUCK_RADIO_IRQ_HEADER_ERR RADIOLIB_SX126X_IRQ_HEADER_ERR
@@ -96,7 +108,7 @@ int DuckLoRa::setupRadio(const LoRaConfigParams &config) {
     // Register the forwarder RX callback FIRST (even if already setup)
     // This ensures ClusterDuck can receive lgw_pkt_rx_s data from the packet forwarder
     printf("[DuckLoRa] Registering RX callback from forwarder...\n");
-    duck_register_rx_callback(duck_rx_from_forwarder_cb);
+    cdp_bridge_register_rx_callback(duck_rx_from_forwarder_cb);
     printf("[DuckLoRa] RX callback registered\n");
 
     if (isSetup) {
@@ -187,7 +199,7 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
     }
 
     // Check if the forwarder provided a packet via the unified bridge
-    auto forwarderPkt = duck_forwarder_bridge::pop_uplink_packet();
+    auto forwarderPkt = cdp_bridge::pop_uplink_packet();
     if (forwarderPkt.has_value()) {
         packetBytes = std::move(forwarderPkt.value());
         loginfo_ln("readReceivedData(): got packet from forwarder bridge size=%d", (int)packetBytes.size());
@@ -196,8 +208,8 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
         int packet_length = lora.getPacketLength();
         if (packet_length < MIN_PACKET_LENGTH) {
             logerr_ln("ERROR  handlePacket rx data size invalid: %d", packet_length);
-            goToReceiveMode(true); // reset receive mode/flags
             return std::nullopt;
+        }
         }
 
         packetBytes.resize(packet_length);
@@ -242,7 +254,7 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
         return std::nullopt;
     }
 
-    // RSSI and SNR are already provided by the SX1302 HAL via duck_handle_gateway_rx()
+    // RSSI and SNR are already provided by the SX1302 HAL via the bridge
     // No need to read from lora object since we're using the gateway hardware
     loginfo_ln("RX: packet size: %d", (int)packetBytes.size());
 
@@ -291,24 +303,7 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
 
     loginfo_ln("readReceivedData: checking data section CRC");
 
-    /*std::vector<uint8_t> data_section;
-    data_section.insert(data_section.end(), &data[DATA_POS], &data[packet_length]);
-    uint32_t packet_data_crc = duckutils::toUint32(&data[DATA_CRC_POS]);
-    uint32_t computed_data_crc =
-            CRC32::calculate(data_section.data(), data_section.size());
-    if (computed_data_crc != packet_data_crc) {
-        //lastReceiveTime = millis(); //even if the packet is invalid, we need to know when we last received
-        //logerr_ln("ERROR data crc mismatch: received: 0x%X, calculated: 0x%X",packet_data_crc, computed_data_crc);
-        //return std::nullopt;
-    }
-    */
-    /*#ifndef CDPCFG_RADIO_SX1262
-        loginfo_ln("RX: rssi: %f snr: %f fe: %d size: %d", lora.getRSSI(), lora.getSNR(), lora.getFrequencyError(true), packet_length);
-    #else
-        loginfo_ln("RX: rssi: %f snr: %f size: %d", lora.getRSSI(), lora.getSNR(), packet_length);
-    #endif*/
-
-
+    lastReceiveTime = millis();
     /*if (rxState != RADIOLIB_ERR_NONE) {
         lastReceiveTime = millis(); //even if rxState is bad, we need to know when we last received
         return std::nullopt;
@@ -334,14 +329,8 @@ void DuckLoRa::delay(size_t size) {
         std::uniform_int_distribution<> distrib(0, 3000L);
         std::chrono::milliseconds txdelay(distrib(gen));
         
-        // Add the time on air to the delay
-        // txdelay_ms += lora.getTimeOnAir(size);
-
-        loginfo_ln("Last receive was %ld ms ago, delaying transmission by %ld ms", millis() - this->lastReceiveTime, txdelay.count());
-
-        // Use FreeRTOS task delay, which will not block other tasks
-        // must pass ticks, so convert from ms to ticks
-        //vTaskDelay(txdelay.count());
+        loginfo_ln("Last receive was %ld ms ago, delaying transmission by %ld ms", 
+                   millis() - this->lastReceiveTime, txdelay.count());
     }
 }
 
@@ -374,7 +363,7 @@ float DuckLoRa::getRSSI()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    // In gateway mode, RSSI is provided by duck_handle_gateway_rx()
+    // In gateway mode, RSSI is provided by the bridge
     // Return 0 as placeholder since RSSI is passed through the bridge
     return 0.0f; 
 }
@@ -385,7 +374,7 @@ float DuckLoRa::getSNR()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    // In gateway mode, SNR is provided by duck_handle_gateway_rx()
+    // In gateway mode, SNR is provided by the bridge
     // Return 0 as placeholder since SNR is passed through the bridge
     return 0.0f;
 }
@@ -484,92 +473,33 @@ void DuckLoRa::serviceInterruptFlags() {
     } */
 }
 
-// IMPORTANT: this function MUST be 'void' type and MUST NOT have any arguments!
 void DuckLoRa::onInterrupt(void) {
-//    interruptFlags = lora.getIrqFlags();
+    // Interrupt handling not needed in gateway mode (SX1302 HAL)
 }
 
-// Callback invoked when packet_forwarder calls duck_handle_gateway_rx()
-// This callback now builds a downlink (echo) and enqueues it for the forwarder via duck_enqueue_downlink().
+// Callback invoked when packet_forwarder receives packets via the bridge
 static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
                                       int16_t rssi, float snr,
                                       uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
                                       uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
 {
-    // Log summary of the received packet.
     loginfo_ln("duck_rx_from_forwarder_cb(): pkt size=%d rssi=%d snr=%.2f freq=%u tmst=%u if=%u bw=%u sf=%u cr=%u",
                size, rssi, snr, freq_hz, tmst, rf_chain, bandwidth_hz, datarate_sf, coderate);
 
     loginfo_ln("duck_rx_from_forwarder_cb(): payload: %s", duckutils::toString(payload, size).c_str());
 
-    // Push the payload into the bridge so DuckLoRa::readReceivedData() can pick it up.
-    // Keep pushing even if you also build a downlink; this decouples forwarder RX -> internal processing.
-    duck_forwarder_bridge::push_packet(payload, size, rssi, snr, freq_hz, tmst, rf_chain,
-                                       bandwidth_hz, datarate_sf, coderate);
-
-    // Build a test downlink: echo the incoming payload prefixed with "ECHO:".
-    // For production LoRaWAN use, replace this block with proper PHYPayload construction.
-    std::vector<uint8_t> dl = build_echo_downlink(payload, size);
-
-    // Enqueue a downlink for the forwarder to transmit. We use tmst=0 to indicate "IMMEDIATE".
-    // If you need timestamped scheduling, set tmst to a gateway timestamp value and have threads_down
-    // treat non-zero tmst as TIMESTAMPED scheduling.
-    /*int rc = duck_enqueue_downlink(dl.data(), (uint16_t)dl.size(),
-                                   freq_hz,   // reuse RX frequency by default; change if you want TX on another freq
-                                   0,         // tmst=0 -> immediate (by convention in this integration)
-                                   14,        // tx power in dBm (adjust/regulatory)
-                                   bandwidth_hz,
-                                   datarate_sf,
-                                   coderate,
-                                   rf_chain);
-    if (rc != 0) {
-        logerr_ln("duck_rx_from_forwarder_cb: failed to enqueue downlink rc=%d", rc);
-    } else {
-        loginfo_ln("duck_rx_from_forwarder_cb: enqueued downlink size=%d", (int)dl.size());
-    } */
+    // Push the payload into the bridge so DuckLoRa::readReceivedData() can pick it up
+    cdp_bridge_handle_uplink(payload, size, rssi, snr, freq_hz, tmst, rf_chain,
+                             bandwidth_hz, datarate_sf, coderate);
 }
 
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     int err = DUCK_ERR_NONE;
-    //int tx_err = RADIOLIB_ERR_NONE;
-
-    /*if (!isSetup) {
-        logerr_ln("ERROR  LoRa radio not setup");
-        return DUCKLORA_ERR_NOT_INITIALIZED;
-    } */
 
     loginfo_ln("TX data");
     logdbg_ln(" -> len: %d, %s", length, duckutils::toString(data, length).c_str());
 
-    /*
-    long t1 = millis();
-    // non blocking transmit
-    tx_err = lora.startTransmit(data, length);
-    switch (tx_err) {
-        case RADIOLIB_ERR_NONE:
-            loginfo_ln("TX data done in : %d ms",(millis() - t1));
-            break;
-
-        case RADIOLIB_ERR_PACKET_TOO_LONG:
-            // the supplied packet was longer than 256 bytes
-            logerr_ln("ERROR startTransmitData too long!");
-            err = DUCKLORA_ERR_MSG_TOO_LARGE;
-            break;
-
-        case RADIOLIB_ERR_TX_TIMEOUT:
-            logerr_ln("ERROR startTransmitData timeout!");
-            err = DUCKLORA_ERR_TIMEOUT;
-            break;
-
-        default:
-            logerr_ln("ERROR startTransmitData failed, err: %d", tx_err);
-            err = DUCKLORA_ERR_TRANSMIT;
-            break;
-    } */
-
-    // Enqueue a downlink for the forwarder to transmit. We use tmst=0 to indicate "IMMEDIATE".
-    // If you need timestamped scheduling, set tmst to a gateway timestamp value and have threads_down
-    // treat non-zero tmst as TIMESTAMPED scheduling.
-    duck_enqueue_downlink(data, (int)length);
+    // Enqueue downlink for transmission via the gateway
+    cdp_bridge_enqueue_downlink(data, (int)length);
     return err;
 }
