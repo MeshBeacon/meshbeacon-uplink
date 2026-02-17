@@ -485,22 +485,11 @@ static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
 {
     printf("[DUCK_RX_CB] Callback invoked: size=%d rssi=%d snr=%.2f freq=%u\n", 
            size, rssi, snr, freq_hz);
-    fflush(stdout);
-    
-    printf("[DUCK_RX_CB] Step 1: Creating packet vector\n");
-    fflush(stdout);
     
     // Store the packet in the bridge for readReceivedData() to pick up
     // Use the C++ API to push directly to the polling buffer
     std::vector<uint8_t> packet(payload, payload + size);
-    
-    printf("[DUCK_RX_CB] Step 2: Calling push_uplink_packet\n");
-    fflush(stdout);
-    
     cdp_bridge::push_uplink_packet(packet);
-    
-    printf("[DUCK_RX_CB] Step 3: Packet stored successfully\n");
-    fflush(stdout);
 }
 
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {
