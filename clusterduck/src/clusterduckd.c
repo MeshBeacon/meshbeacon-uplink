@@ -2072,6 +2072,90 @@ void thread_down(void) {
 
     while (!exit_sig && !quit_sig) {
 
+
+            /* Try to pop a downlink from ClusterDuck */
+            int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
+                                            &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
+                                            &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
+
+            if (duck_rc == 0) {
+                /* buf_capacity now holds actual downlink payload size */
+                if (buf_capacity == 0) {
+                    // buffer too small; allocate larger buffer or handle error
+                } else {
+                    /* Build lgw_pkt_tx_s - field names vary by HAL version */
+                    memset(&txpkt, 0, sizeof(txpkt));
+
+                    /* Copy payload */
+                    memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
+                    txpkt.size = buf_capacity;
+
+                    /* Frequency and timestamp (fallback to CDP defaults if not provided) */
+                    txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
+                    txpkt.count_us = dl_tmst;
+
+                    /* Choose tx_mode */
+                    txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
+
+                    /* RF chain and power */
+                    txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
+                    txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
+
+                    /* Modulation params — LoRa defaults mapped from CDP config if not provided */
+                    txpkt.modulation = MOD_LORA;
+                    txpkt.bandwidth  = BW_125KHZ;
+                    txpkt.datarate   = DR_LORA_SF7;
+                    txpkt.coderate   = CR_LORA_4_5;
+                }
+
+	        MSG("INFO: txpkt size is %u\n", txpkt.size);
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
+
+                /* End of Zaihan's code */
+
+                /* reset error/warning results */
+                jit_result = warning_result = JIT_ERROR_OK;
+                warning_value = 0;
+
+                /* check TX frequency before trying to queue packet */
+                if ((txpkt.freq_hz < tx_freq_min[txpkt.rf_chain]) || (txpkt.freq_hz > tx_freq_max[txpkt.rf_chain])) {
+                    jit_result = JIT_ERROR_TX_FREQ;
+                    MSG("ERROR: Packet REJECTED, unsupported frequency - %u (min:%u,max:%u)\n", txpkt.freq_hz, tx_freq_min[txpkt.rf_chain], tx_freq_max[txpkt.rf_chain]);
+                }
+
+                /* check TX power before trying to queue packet, send a warning if not supported */
+                if (jit_result == JIT_ERROR_OK) {
+                    i = get_tx_gain_lut_index(txpkt.rf_chain, txpkt.rf_power, &tx_lut_idx);
+                    if ((i < 0) || (txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power != txpkt.rf_power)) {
+                        /* this RF power is not supported, throw a warning, and use the closest lower power supported */
+                        warning_result = JIT_ERROR_TX_POWER;
+                        warning_value = (int32_t)txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
+                        printf("WARNING: Requested TX power is not supported (%ddBm), actual power used: %ddBm\n", txpkt.rf_power, warning_value);
+                        txpkt.rf_power = txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
+                    }
+                }
+
+                /* insert packet to be sent into JIT queue */
+                if (jit_result == JIT_ERROR_OK) {
+                    pthread_mutex_lock(&mx_concent);
+                    lgw_get_instcnt(&current_concentrator_time);
+                    pthread_mutex_unlock(&mx_concent);
+                    jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
+                    if (jit_result != JIT_ERROR_OK) {
+                        printf("ERROR: Packet REJECTED (jit error=%d)\n", jit_result);
+                    } else {
+                        /* In case of a warning having been raised before, we notify it */
+                        jit_result = warning_result;
+                    }
+                    pthread_mutex_lock(&mx_meas_dw);
+                    meas_nb_tx_requested += 1;
+                    pthread_mutex_unlock(&mx_meas_dw);
+                }
+
+            /* Reset buffer capacity for next call */
+            buf_capacity = sizeof(duck_payload_buf);
+	    }
+
         /* auto-quit if the threshold is crossed */
         if ((autoquit_threshold > 0) && (autoquit_cnt >= autoquit_threshold)) {
             exit_sig = true;
@@ -2194,85 +2278,7 @@ void thread_down(void) {
                 }
             }
 
-            /* Try to pop a downlink from ClusterDuck */
-            int duck_rc = duck_pop_downlink(duck_payload_buf, &buf_capacity,
-                                            &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
-                                            &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
-            if (duck_rc == 0) {
-                /* buf_capacity now holds actual downlink payload size */
-                if (buf_capacity == 0) {
-                    // buffer too small; allocate larger buffer or handle error
-                } else {
-                    /* Build lgw_pkt_tx_s - field names vary by HAL version */
-                    memset(&txpkt, 0, sizeof(txpkt));
-
-                    /* Copy payload */
-                    memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
-                    txpkt.size = buf_capacity;
-
-                    /* Frequency and timestamp (fallback to CDP defaults if not provided) */
-                    txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
-                    txpkt.count_us = dl_tmst;
-
-                    /* Choose tx_mode */
-                    txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
-
-                    /* RF chain and power */
-                    txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
-                    txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
-
-                    /* Modulation params — LoRa defaults mapped from CDP config if not provided */
-                    txpkt.modulation = MOD_LORA;
-                    txpkt.bandwidth  = BW_125KHZ;
-                    txpkt.datarate   = DR_LORA_SF7;
-                    txpkt.coderate   = CR_LORA_4_5;
-                }
-		
-	        MSG("INFO: txpkt size is %u\n", txpkt.size);
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
-
-                /* End of Zaihan's code */
-
-                /* reset error/warning results */
-                jit_result = warning_result = JIT_ERROR_OK;
-                warning_value = 0;
-
-                /* check TX frequency before trying to queue packet */
-                if ((txpkt.freq_hz < tx_freq_min[txpkt.rf_chain]) || (txpkt.freq_hz > tx_freq_max[txpkt.rf_chain])) {
-                    jit_result = JIT_ERROR_TX_FREQ;
-                    MSG("ERROR: Packet REJECTED, unsupported frequency - %u (min:%u,max:%u)\n", txpkt.freq_hz, tx_freq_min[txpkt.rf_chain], tx_freq_max[txpkt.rf_chain]);
-                }
-
-                /* check TX power before trying to queue packet, send a warning if not supported */
-                if (jit_result == JIT_ERROR_OK) {
-                    i = get_tx_gain_lut_index(txpkt.rf_chain, txpkt.rf_power, &tx_lut_idx);
-                    if ((i < 0) || (txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power != txpkt.rf_power)) {
-                        /* this RF power is not supported, throw a warning, and use the closest lower power supported */
-                        warning_result = JIT_ERROR_TX_POWER;
-                        warning_value = (int32_t)txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
-                        printf("WARNING: Requested TX power is not supported (%ddBm), actual power used: %ddBm\n", txpkt.rf_power, warning_value);
-                        txpkt.rf_power = txlut[txpkt.rf_chain].lut[tx_lut_idx].rf_power;
-                    }
-                }
-
-                /* insert packet to be sent into JIT queue */
-                if (jit_result == JIT_ERROR_OK) {
-                    pthread_mutex_lock(&mx_concent);
-                    lgw_get_instcnt(&current_concentrator_time);
-                    pthread_mutex_unlock(&mx_concent);
-                    jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
-                    if (jit_result != JIT_ERROR_OK) {
-                        printf("ERROR: Packet REJECTED (jit error=%d)\n", jit_result);
-                    } else {
-                        /* In case of a warning having been raised before, we notify it */
-                        jit_result = warning_result;
-                    }
-                    pthread_mutex_lock(&mx_meas_dw);
-                    meas_nb_tx_requested += 1;
-                    pthread_mutex_unlock(&mx_meas_dw);
-                }
-	    }
         }
     }
     MSG("\nINFO: End of downstream thread\n");
