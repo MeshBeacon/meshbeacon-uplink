@@ -1869,7 +1869,9 @@ void thread_up(void) {
         }
 
         /* Process each received packet */
-        MSG_PRINTF(DEBUG_PKT_FWD, "INFO: Received %d packet(s) from concentrator\n", nb_pkt);
+        if (nb_pkt > 0) {
+            MSG("INFO: Received %d packet(s) from concentrator\n", nb_pkt);
+        }
         for (int i = 0; i < nb_pkt; ++i) {
             struct lgw_pkt_rx_s *p = &rxpkt[i];
             
@@ -1886,7 +1888,7 @@ void thread_up(void) {
             size = p->size;
 
             // Pass packet to ClusterDuck bridge
-            MSG_PRINTF(DEBUG_PKT_FWD, "INFO: [%d/%d] Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
+            MSG("INFO: [%d/%d] Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
                        i+1, nb_pkt, size, rssi, snr);
             duck_handle_gateway_rx(payload, size,
                                    rssi, snr,
