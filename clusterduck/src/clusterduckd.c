@@ -339,10 +339,82 @@ void thread_valid(void);
 void thread_spectral_scan(void);
 void thread_duck(void);  /* ClusterDuck processing */
 
+/* MQTT Initialization and Connection */
+int mqtt_init_and_connect(void) {
+    if (!mqtt_enabled) {
+        return 0; // MQTT disabled, skip
+    }
+    
+    // Create MQTT broker address string
+    char broker_address[256];
+    snprintf(broker_address, sizeof(broker_address), "tcp://%s:%d", mqtt_server, mqtt_port);
+    
+    MSG("[MQTT] Creating MQTT client for broker: %s\n", broker_address);
+    
+    // Create MQTT client
+    int rc = MQTTClient_create(&mqtt_client, broker_address, mqtt_client_id,
+                                MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        MSG("ERROR: [MQTT] Failed to create MQTT client, return code %d\n", rc);
+        return -1;
+    }
+    
+    // Set up connection options
+    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+    conn_opts.keepAliveInterval = mqtt_keepalive;
+    conn_opts.cleansession = 1;
+    
+    // Set username and password if provided
+    if (strlen(mqtt_username) > 0) {
+        conn_opts.username = mqtt_username;
+        conn_opts.password = mqtt_password;
+        MSG("[MQTT] Using username authentication\n");
+    }
+    
+    // TODO: Add TLS/SSL support
+    // if (mqtt_use_tls) {
+    //     MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+    //     ssl_opts.trustStore = mqtt_ca_cert_file;
+    //     conn_opts.ssl = &ssl_opts;
+    // }
+    
+    MSG("[MQTT] Connecting to broker...\n");
+    rc = MQTTClient_connect(mqtt_client, &conn_opts);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        MSG("ERROR: [MQTT] Failed to connect to broker, return code %d\n", rc);
+        MQTTClient_destroy(&mqtt_client);
+        mqtt_client = NULL;
+        return -1;
+    }
+    
+    MSG("[MQTT] Successfully connected to broker\n");
+    
+    // Subscribe to incoming topic if configured
+    if (strlen(mqtt_sub_topic) > 0) {
+        MSG("[MQTT] Subscribing to topic: %s\n", mqtt_sub_topic);
+        rc = MQTTClient_subscribe(mqtt_client, mqtt_sub_topic, 0);
+        if (rc != MQTTCLIENT_SUCCESS) {
+            MSG("WARNING: [MQTT] Failed to subscribe to topic %s, return code %d\n", 
+                mqtt_sub_topic, rc);
+        }
+    }
+    
+    return 0;
+}
+
 /* MQTT Publishing function */
 void mqtt_publish_message(const char* topic, const char* message, int length) {
-    if (!mqtt_enabled) {
-        return; // MQTT disabled, skip
+    if (!mqtt_enabled || mqtt_client == NULL) {
+        return; // MQTT disabled or not connected, skip
+    }
+    
+    // Check if client is still connected
+    if (!MQTTClient_isConnected(mqtt_client)) {
+        MSG("WARNING: [MQTT] Client disconnected, attempting to reconnect...\n");
+        if (mqtt_init_and_connect() != 0) {
+            MSG("ERROR: [MQTT] Reconnection failed\n");
+            return;
+        }
     }
     
     // Use configured topic if empty topic provided
@@ -351,15 +423,27 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     MSG("[MQTT] Publishing to topic: %s\n", pub_topic);
     MSG("[MQTT] Message (%d bytes): %s\n", length, message);
     
-    // TODO: Integrate actual MQTT library (e.g., Paho MQTT C)
-    // For now, just log to console and file
-    // Example integration:
+    // Publish message
     MQTTClient_message pubmsg = MQTTClient_message_initializer;
     pubmsg.payload = (void*)message;
     pubmsg.payloadlen = length;
     pubmsg.qos = 1;
     pubmsg.retained = 0;
-    MQTTClient_publishMessage(mqtt_client, pub_topic, &pubmsg, NULL);
+    
+    MQTTClient_deliveryToken token;
+    int rc = MQTTClient_publishMessage(mqtt_client, pub_topic, &pubmsg, &token);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        MSG("ERROR: [MQTT] Failed to publish message, return code %d\n", rc);
+        return;
+    }
+    
+    // Wait for message to be delivered
+    rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        MSG("WARNING: [MQTT] Message delivery timeout\n");
+    } else {
+        MSG("[MQTT] Message published successfully\n");
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1596,6 +1680,13 @@ int main(int argc, char ** argv)
         x = parse_mqtt_configuration(conf_fname);
         if (x != 0) {
             MSG("INFO: no MQTT configuration or MQTT disabled\n");
+        } else {
+            // Initialize and connect MQTT client if enabled
+            x = mqtt_init_and_connect();
+            if (x != 0) {
+                MSG("WARNING: [main] MQTT initialization failed, continuing without MQTT\n");
+                mqtt_enabled = false;
+            }
         }
         x = parse_debug_configuration(conf_fname);
         if (x != 0) {
@@ -1854,6 +1945,14 @@ int main(int argc, char ** argv)
 
     /* if an exit signal was received, try to quit properly */
     if (exit_sig) {
+        /* disconnect MQTT client */
+        if (mqtt_enabled && mqtt_client != NULL) {
+            MSG("INFO: Disconnecting MQTT client...\n");
+            MQTTClient_disconnect(mqtt_client, 1000);
+            MQTTClient_destroy(&mqtt_client);
+            MSG("INFO: MQTT client disconnected\n");
+        }
+        
         /* stop the hardware */
         i = lgw_stop();
         if (i == LGW_HAL_SUCCESS) {
