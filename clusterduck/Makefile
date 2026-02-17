@@ -92,11 +92,9 @@ $(OBJDIR):
 $(OBJDIR)/%.o: src/%.c $(INCLUDES) | $(OBJDIR)
 	$(CC) -c $(CFLAGS) -I$(LGW_PATH)/inc $< -o $@
 
-### Rule to compile ClusterDuck duck_bridge.cpp into an object file
-# This brings duck_bridge into the packet_forwarder binary so the C code can call the C API.
-$(OBJDIR)/duck_bridge.o: $(CLUSTERDUCK_PATH)/src/radio/duck_bridge.cpp | $(OBJDIR)
-	$(CXX) -c $(CXXFLAGS) $< -o $@
-$(OBJDIR)/DuckForwarderBridge.o: $(CLUSTERDUCK_PATH)/src/forwarder/DuckForwarderBridge.cpp | $(OBJDIR)
+### Rule to compile ClusterDuck unified bridge into an object file
+# This brings the new unified bridge into the binary, replacing old duck_bridge and DuckForwarderBridge
+$(OBJDIR)/ClusterDuckBridge.o: $(CLUSTERDUCK_PATH)/src/bridge/ClusterDuckBridge.cpp | $(OBJDIR)
 	$(CXX) -c $(CXXFLAGS) $< -o $@
 $(OBJDIR)/CdpPacket.o: $(CLUSTERDUCK_PATH)/src/CdpPacket.cpp | $(OBJDIR)
 	$(CXX) -c $(CXXFLAGS) $< -o $@
@@ -118,9 +116,9 @@ $(OBJDIR)/DuckUtils.o: $(CLUSTERDUCK_PATH)/src/utils/DuckUtils.cpp | $(OBJDIR)
 $(OBJDIR)/$(APP_NAME).o: src/$(APP_NAME).c $(LGW_INC) $(INCLUDES) | $(OBJDIR)
 	$(CC) -c $(CFLAGS) $(VFLAG) -I$(LGW_PATH)/inc $< -o $@
 
-# Link with g++ to ensure proper linking of C++ runtime (duck_bridge.o uses C++)
-# Add $(OBJDIR)/duck_bridge.o into the link line.
-$(APP_NAME): $(OBJDIR)/$(APP_NAME).o $(LGW_PATH)/libloragw.a $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o 
-	$(CXX) -L$(LGW_PATH) -L$(LIB_PATH) $< $(OBJDIR)/jitqueue.o $(OBJDIR)/duck_bridge.o $(OBJDIR)/DuckForwarderBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o $(MQTT_OBJS) -o $@ $(LIBS)
+# Link with g++ to ensure proper linking of C++ runtime
+# Using unified ClusterDuckBridge.o instead of old duck_bridge.o and DuckForwarderBridge.o
+$(APP_NAME): $(OBJDIR)/$(APP_NAME).o $(LGW_PATH)/libloragw.a $(OBJDIR)/jitqueue.o $(OBJDIR)/ClusterDuckBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o 
+	$(CXX) -L$(LGW_PATH) -L$(LIB_PATH) $< $(OBJDIR)/jitqueue.o $(OBJDIR)/ClusterDuckBridge.o $(OBJDIR)/CdpPacket.o $(OBJDIR)/bloomfilter.o $(OBJDIR)/DuckRouter.o $(OBJDIR)/DuckLoRa.o $(OBJDIR)/Init.o $(OBJDIR)/CRC32.o $(OBJDIR)/DuckUtils.o $(MQTT_OBJS) -o $@ $(LIBS)
 
 ### EOF

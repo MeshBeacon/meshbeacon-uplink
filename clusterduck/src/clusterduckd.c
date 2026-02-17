@@ -57,7 +57,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include "loragw_reg.h"
 #include "loragw_gps.h"
 #include <MQTTClient.h>
-#include "radio/duck_bridge.h"   // add this near the other includes; ensure the compiler include path finds it
+#include "bridge/duck_bridge_compat.h"   // Unified bridge with backward compatibility
 
 /* ClusterDuck Protocol initialization */
 #ifdef __cplusplus

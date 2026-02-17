@@ -3,8 +3,7 @@
 
 #include "Duck.h"
 #include "../CdpPacket.h"
-#include "../radio/duck_bridge.h"         // provides duck_register_rx_callback(...) for your sx1302_hal bridge
-#include "../forwarder/DuckForwarderBridge.h"  // provides duck_forwarder_bridge::has_packet()
+#include "../bridge/duck_bridge_compat.h"  // Unified bridge with backward compatibility
 
 template <typename RadioType = DuckLoRa>
 class PapaDuck : public Duck<RadioType> {
@@ -56,8 +55,8 @@ public:
    * This is a simplified version of main() that skips network joining logic
    */
   void processPackets() {
-    // Check if we have packets from the forwarder bridge (SX1302 HAL)
-    bool has_bridge_packet = duck_forwarder_bridge::has_packet();
+    // Check if we have packets from the forwarder bridge (SX1302 HAL) using unified API
+    bool has_bridge_packet = duck_forwarder_bridge::has_uplink_packet();
     
     if (this->duckRadio.getReceiveFlag() || has_bridge_packet) {
       if (has_bridge_packet) {

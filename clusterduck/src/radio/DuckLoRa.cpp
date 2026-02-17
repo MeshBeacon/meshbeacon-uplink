@@ -1,7 +1,6 @@
 #include "DuckLoRa.h"
-#include "duck_bridge.h"
+#include "../bridge/duck_bridge_compat.h"
 #include "../utils/DuckUtils.h"
-#include "../forwarder/DuckForwarderBridge.h"
 
 #ifdef CDPCFG_RADIO_SX1262
 #define DUCK_RADIO_IRQ_TIMEOUT RADIOLIB_SX126X_IRQ_TIMEOUT
@@ -187,9 +186,8 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
         return std::nullopt;
     }
 
-    // First, check whether the forwarder provided a packet via the bridge.
-    #include "forwarder/DuckForwarderBridge.h"
-    auto forwarderPkt = duck_forwarder_bridge::pop_packet();
+    // Check if the forwarder provided a packet via the unified bridge
+    auto forwarderPkt = duck_forwarder_bridge::pop_uplink_packet();
     if (forwarderPkt.has_value()) {
         packetBytes = std::move(forwarderPkt.value());
         loginfo_ln("readReceivedData(): got packet from forwarder bridge size=%d", (int)packetBytes.size());
