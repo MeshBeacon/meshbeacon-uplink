@@ -1868,29 +1868,31 @@ void thread_up(void) {
             }
         }
 
-        // Example using the most common member names - adjust if your struct differs:
-        //#if 1
-        /* Edit these three lines to match your lgw_pkt_rx_s layout */
-        rssi = (int16_t)rxpkt->rssic;     /* change if your name differs */
-        snr  = rxpkt->snr;
-        freq_hz = rxpkt->freq_hz;
-        tmst = rxpkt->count_us;
-        rf_chain = rxpkt->if_chain;
-        // custom variables added by zaihan
-        bandwidth_hz = rxpkt->bandwidth;
-        datarate_sf = rxpkt->datarate;
-        coderate = rxpkt->coderate;
-        payload = rxpkt->payload;   // usually pkt->payload
-        size = rxpkt->size;               // usually pkt->size
-        //#endif
+        /* Process each received packet */
+        MSG_PRINTF(DEBUG_PKT_FWD, "INFO: Received %d packet(s) from concentrator\n", nb_pkt);
+        for (int i = 0; i < nb_pkt; ++i) {
+            struct lgw_pkt_rx_s *p = &rxpkt[i];
+            
+            // Extract packet metadata
+            rssi = (int16_t)p->rssic;
+            snr  = p->snr;
+            freq_hz = p->freq_hz;
+            tmst = p->count_us;
+            rf_chain = p->if_chain;
+            bandwidth_hz = p->bandwidth;
+            datarate_sf = p->datarate;
+            coderate = p->coderate;
+            payload = p->payload;
+            size = p->size;
 
-        // Finally call the ClusterDuck bridge:
-        MSG_PRINTF(DEBUG_PKT_FWD, "INFO: Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
-                   size, rssi, snr);
-        duck_handle_gateway_rx(payload, size,
-                               rssi, snr,
-                               freq_hz, tmst, rf_chain,
-                               bandwidth_hz, datarate_sf, coderate);
+            // Pass packet to ClusterDuck bridge
+            MSG_PRINTF(DEBUG_PKT_FWD, "INFO: [%d/%d] Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
+                       i+1, nb_pkt, size, rssi, snr);
+            duck_handle_gateway_rx(payload, size,
+                                   rssi, snr,
+                                   freq_hz, tmst, rf_chain,
+                                   bandwidth_hz, datarate_sf, coderate);
+        }
 
     }
     MSG("\nINFO: End of upstream thread\n");
