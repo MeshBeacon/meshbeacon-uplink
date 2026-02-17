@@ -23,7 +23,11 @@ static duck_rx_cb_t g_rx_cb = nullptr;
 
 extern "C" {
 
-void duck_register_rx_callback(duck_rx_cb_t cb) { g_rx_cb = cb; }
+void duck_register_rx_callback(duck_rx_cb_t cb) { 
+    g_rx_cb = cb; 
+    printf("[DUCK_BRIDGE] RX callback %s (cb=%p)\n", 
+           cb ? "REGISTERED" : "UNREGISTERED", (void*)cb);
+}
 
 void duck_handle_gateway_rx(const uint8_t* payload, uint16_t size,
                             int16_t rssi, float snr,

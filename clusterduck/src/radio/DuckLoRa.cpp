@@ -159,7 +159,9 @@ int DuckLoRa::setupRadio(const LoRaConfigParams &config) {
     // Register the forwarder RX callback so ClusterDuck can receive lgw_pkt_rx_s data
     // when the packet_forwarder calls duck_handle_gateway_rx(...).
     // This registration is optional; DuckLoRa will still function if no forwarder is present.
+    loginfo_ln("Registering duck_rx_from_forwarder_cb callback...");
     duck_register_rx_callback(duck_rx_from_forwarder_cb);
+    loginfo_ln("Callback registered successfully");
 
     loginfo_ln("LoRa radio setup complete");
     isSetup = true;

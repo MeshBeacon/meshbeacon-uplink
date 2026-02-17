@@ -56,13 +56,17 @@ extern "C" void* hub_init_and_setup(void) {
     printf("[HUB] Initializing ClusterDuck Protocol...\n");
     
     // Set up the LoRa radio (this will register callbacks)
+    printf("[HUB] Calling hub.begin()...\n");
     int err = hub.begin();
+    printf("[HUB] hub.begin() returned: %d\n", err);
+    
     if (err != DUCK_ERR_NONE) {
         printf("[HUB] ERROR: Failed to setup LoRa radio, err=%d\n", err);
         return nullptr;
     }
     
     // Set the receive callback
+    printf("[HUB] Setting receive callback...\n");
     hub.onReceiveDuckData(handleDuckData);
     
     printf("[HUB] ClusterDuck Protocol initialized successfully\n");
