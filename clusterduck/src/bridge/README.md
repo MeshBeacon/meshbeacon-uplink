@@ -164,23 +164,6 @@ void sendPacket(const std::vector<uint8_t>& data) {
 }
 ```
 
-## API Function Reference
-
-### Old vs New API Mapping
-
-For reference, here's how the old API maps to the new API:
-
-| Old Function (Removed) | New Function |
-|------------------------|--------------|
-| `duck_register_rx_callback()` | `cdp_bridge_register_rx_callback()` |
-| `duck_handle_gateway_rx()` | `cdp_bridge_handle_uplink()` |
-| `duck_enqueue_downlink()` | `cdp_bridge_enqueue_downlink()` |
-| `duck_enqueue_downlink_ext()` | `cdp_bridge_enqueue_downlink_ext()` |
-| `duck_pop_downlink()` | `cdp_bridge_pop_downlink()` |
-| `duck_forwarder_bridge::push_packet()` | `cdp_bridge_handle_uplink()` |
-| `duck_forwarder_bridge::pop_packet()` | `cdp_bridge::pop_uplink_packet()` |
-| `duck_forwarder_bridge::has_packet()` | `cdp_bridge::has_uplink_packet()` |
-
 ## Makefile Configuration
 
 The Makefile has been updated to use the unified bridge:
