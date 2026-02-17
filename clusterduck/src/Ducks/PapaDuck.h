@@ -4,6 +4,7 @@
 #include "Duck.h"
 #include "../CdpPacket.h"
 #include "../radio/duck_bridge.h"         // provides duck_register_rx_callback(...) for your sx1302_hal bridge
+#include "../forwarder/DuckForwarderBridge.h"  // provides duck_forwarder_bridge::has_packet()
 
 template <typename RadioType = DuckLoRa>
 class PapaDuck : public Duck<RadioType> {
@@ -55,8 +56,15 @@ public:
    * This is a simplified version of main() that skips network joining logic
    */
   void processPackets() {
-    if (this->duckRadio.getReceiveFlag()) {
-      printf("[PAPADUCK] Receive flag is set, calling handleReceivedPacket()\n");
+    // Check if we have packets from the forwarder bridge (SX1302 HAL)
+    bool has_bridge_packet = duck_forwarder_bridge::has_packet();
+    
+    if (this->duckRadio.getReceiveFlag() || has_bridge_packet) {
+      if (has_bridge_packet) {
+        printf("[PAPADUCK] Bridge has packet, calling handleReceivedPacket()\n");
+      } else {
+        printf("[PAPADUCK] Receive flag is set, calling handleReceivedPacket()\n");
+      }
       this->handleReceivedPacket();
     }
   }
