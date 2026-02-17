@@ -20,13 +20,13 @@
 #include <sys/time.h>
 #include <iostream>
 
-long millis() {
+inline long millis() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
 }
 
-bool delay(unsigned long duration, unsigned long &startMarker) {
+inline bool delay(unsigned long duration, unsigned long &startMarker) {
   if (millis() - startMarker >= duration) {
     startMarker = millis();
     return true; // Time is up

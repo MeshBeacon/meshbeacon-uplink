@@ -2,7 +2,7 @@
 #include <queue>
 
 // --- Global Objects ---
-PapaDuck hub("PAPADUCK");        
+PapaDuck hub("PAPADUCK");
 
 void processMessageFromDucks(std::vector<std::byte> packetBuffer);
 void handleDuckData(CdpPacket receivedPacket);
@@ -56,7 +56,7 @@ extern "C" void* hub_init_and_setup(void) {
     printf("[HUB] Initializing ClusterDuck Protocol...\n");
     
     // Set up the LoRa radio (this will register callbacks)
-    int err = hub.setupLoRaRadio();
+    int err = hub.begin();
     if (err != DUCK_ERR_NONE) {
         printf("[HUB] ERROR: Failed to setup LoRa radio, err=%d\n", err);
         return nullptr;

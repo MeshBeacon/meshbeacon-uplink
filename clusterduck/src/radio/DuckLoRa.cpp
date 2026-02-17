@@ -241,11 +241,9 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
         return std::nullopt;
     }
 
-    #ifndef CDPCFG_RADIO_SX1262
-        loginfo_ln("RX: rssi: %f snr: %f fe: %d size: %d", lora.getRSSI(), lora.getSNR(), lora.getFrequencyError(true), (int)packetBytes.size());
-    #else
-        loginfo_ln("RX: rssi: %f snr: %f size: %d", lora.getRSSI(), lora.getSNR(), (int)packetBytes.size());
-    #endif
+    // RSSI and SNR are already provided by the SX1302 HAL via duck_handle_gateway_rx()
+    // No need to read from lora object since we're using the gateway hardware
+    loginfo_ln("RX: packet size: %d", (int)packetBytes.size());
 
     /*if (rxState != RADIOLIB_ERR_NONE) {
         return std::nullopt;
@@ -319,10 +317,8 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
     return packetVector; */ 
 }
 
-/*
 int DuckLoRa::sendData(uint8_t* data, int length)
 {
-
     if (!isSetup) {
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
@@ -364,13 +360,10 @@ int DuckLoRa::startReceive()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    int state = lora.startReceive();
-
-    if (state != RADIOLIB_ERR_NONE) {
-        logerr_ln("ERROR startReceive failed, code %d", state);
-        return DUCKLORA_ERR_RECEIVE;
-    }
-
+    
+    // In gateway mode (SX1302 HAL), receiving is handled by the concentrator hardware
+    // No need to call lora.startReceive() since clusterduckd.c manages reception
+    loginfo_ln("Gateway mode: receive handled by SX1302 HAL");
     return DUCK_ERR_NONE;
 }
 
@@ -380,7 +373,9 @@ float DuckLoRa::getRSSI()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    return lora.getRSSI(); 
+    // In gateway mode, RSSI is provided by duck_handle_gateway_rx()
+    // Return 0 as placeholder since RSSI is passed through the bridge
+    return 0.0f; 
 }
 
 float DuckLoRa::getSNR()
@@ -389,38 +384,33 @@ float DuckLoRa::getSNR()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    return lora.getSNR();
+    // In gateway mode, SNR is provided by duck_handle_gateway_rx()
+    // Return 0 as placeholder since SNR is passed through the bridge
+    return 0.0f;
 }
 
 
 int DuckLoRa::standBy()
 { 
-    int rc = DUCK_ERR_NONE;
     if (!isSetup) {
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    if (lora.standby() != RADIOLIB_ERR_NONE) {
-        logerr_ln("ERROR  standby failed");
-        rc = DUCKLORA_ERR_STANDBY;
-    }
-    return rc;
+    // In gateway mode, standby is managed by the SX1302 HAL
+    loginfo_ln("Gateway mode: standby handled by SX1302 HAL");
+    return DUCK_ERR_NONE;
 }
 
 int DuckLoRa::sleep()
 { 
-    int rc = DUCK_ERR_NONE;
-
     if (!isSetup) {
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }    
-    if (lora.sleep() != RADIOLIB_ERR_NONE) {
-        logerr_ln("ERROR  sleep failed");
-        rc = DUCKLORA_ERR_SLEEP;
-    }
-    return rc;
-}*/
+    // In gateway mode, sleep is managed by the SX1302 HAL
+    loginfo_ln("Gateway mode: sleep handled by SX1302 HAL");
+    return DUCK_ERR_NONE;
+}
 
 void DuckLoRa::serviceInterruptFlags() {
 /*    if (DuckLoRa::interruptFlags != 0) {

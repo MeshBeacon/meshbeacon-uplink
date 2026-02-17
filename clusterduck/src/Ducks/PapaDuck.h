@@ -31,6 +31,15 @@ public:
    */
   DuckType getType() { return DuckType::PAPA; }
 
+  /**
+   * @brief Public wrapper to initialize the LoRa radio
+   * This allows external C code to initialize the radio setup
+   * @returns DUCK_ERR_NONE if successful, error code otherwise
+   */
+  int begin(const LoRaConfigParams& config = RadioType::defaultRadioParams) {
+    return this->setupLoRaRadio(config);
+  }
+
   //remove this when mqtt quack pack is added
   bool isWifiConnected(){
     return this->duckWifi.connected();
