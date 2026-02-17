@@ -1,5 +1,6 @@
 #include "DuckForwarderBridge.h"
 #include <mutex>
+#include <cstdio>
 
 namespace duck_forwarder_bridge {
 
@@ -12,10 +13,13 @@ void push_packet(const uint8_t* payload, uint16_t size,
                  uint32_t /*bandwidth_hz*/, uint8_t /*datarate_sf*/, uint8_t /*coderate*/)
 {
     if (payload == nullptr || size == 0) {
+        printf("[FORWARDER_BRIDGE] WARNING: Invalid packet (payload=%p, size=%u)\n", 
+               (void*)payload, size);
         return;
     }
     std::lock_guard<std::mutex> lock(s_mutex);
     s_packet = std::vector<uint8_t>(payload, payload + size);
+    printf("[FORWARDER_BRIDGE] Pushed packet to bridge, size=%u\n", size);
 }
 
 std::optional<std::vector<uint8_t>> pop_packet()
@@ -26,6 +30,7 @@ std::optional<std::vector<uint8_t>> pop_packet()
     }
     auto out = std::move(s_packet.value());
     s_packet.reset();
+    printf("[FORWARDER_BRIDGE] Popped packet from bridge, size=%zu\n", out.size());
     return out;
 }
 

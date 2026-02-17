@@ -1885,6 +1885,8 @@ void thread_up(void) {
         //#endif
 
         // Finally call the ClusterDuck bridge:
+        MSG_PRINTF(DEBUG_PKT_FWD, "INFO: Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
+                   size, rssi, snr);
         duck_handle_gateway_rx(payload, size,
                                rssi, snr,
                                freq_hz, tmst, rf_chain,

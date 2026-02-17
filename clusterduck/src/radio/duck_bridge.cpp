@@ -3,6 +3,7 @@
 #include <deque>
 #include <mutex>
 #include <cstring>
+#include <cstdio>
 
 struct DuckDlItem {
     std::vector<uint8_t> payload;
@@ -28,9 +29,14 @@ void duck_handle_gateway_rx(const uint8_t* payload, uint16_t size,
                             int16_t rssi, float snr,
                             uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
                             uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate) {
+    printf("[DUCK_BRIDGE] Received packet: size=%u, rssi=%d, snr=%.1f, callback=%s\n", 
+           size, rssi, snr, g_rx_cb ? "registered" : "NULL");
+    
     if (g_rx_cb) {
         g_rx_cb(payload, size, rssi, snr, freq_hz, tmst, rf_chain,
                 bandwidth_hz, datarate_sf, coderate);
+    } else {
+        printf("[DUCK_BRIDGE] WARNING: No RX callback registered!\n");
     }
 }
 

@@ -52,6 +52,7 @@ public:
    */
   void processPackets() {
     if (this->duckRadio.getReceiveFlag()) {
+      printf("[PAPADUCK] Receive flag is set, calling handleReceivedPacket()\n");
       this->handleReceivedPacket();
     }
   }
