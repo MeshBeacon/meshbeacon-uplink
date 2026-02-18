@@ -46,21 +46,32 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     
     // For RREQ/RREP packets, extract and include the routing path
     if (cdp_packet.topic == reservedTopic::rreq || cdp_packet.topic == reservedTopic::rrep) {
-        RouteJSON routeDoc(cdp_packet.data);
+        printf("[HUB] Processing route packet, data size: %zu\n", cdp_packet.data.size());
         
-        // Add path as JSON array
-        JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
-        
-        const auto& pathVec = routeDoc.getPath();
-        if (pathVec.empty()) {
-            // If path is empty, use the source device ID as fallback
-            pathArray.add(sduid.c_str());
-            printf("[HUB] Route packet has empty path, using DeviceID as fallback\n");
-        } else {
-            for (const auto& node : pathVec) {
-                pathArray.add(node);
+        try {
+            RouteJSON routeDoc(cdp_packet.data);
+            
+            // Add path as JSON array
+            JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
+            
+            const auto& pathVec = routeDoc.getPath();
+            printf("[HUB] Parsed RouteJSON, path vector size: %zu\n", pathVec.size());
+            
+            if (pathVec.empty()) {
+                // If path is empty, use the source device ID as fallback
+                pathArray.add(sduid.c_str());
+                printf("[HUB] Route packet has empty path, using DeviceID '%s' as fallback\n", sduid.c_str());
+            } else {
+                for (const auto& node : pathVec) {
+                    pathArray.add(node);
+                    printf("[HUB] Added path node: %s\n", node.c_str());
+                }
+                printf("[HUB] Route packet with path size: %zu\n", pathVec.size());
             }
-            printf("[HUB] Route packet with path size: %zu\n", pathVec.size());
+        } catch (const std::exception& e) {
+            printf("[HUB] ERROR: Exception parsing RouteJSON: %s, using DeviceID as fallback\n", e.what());
+            JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
+            pathArray.add(sduid.c_str());
         }
     }
 
