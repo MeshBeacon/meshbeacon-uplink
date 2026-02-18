@@ -50,11 +50,18 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         
         // Add path as JSON array
         JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
-        for (const auto& node : routeDoc.getPath()) {
-            pathArray.add(node);
-        }
         
-        printf("[HUB] Route packet with path size: %zu\n", routeDoc.getPath().size());
+        const auto& pathVec = routeDoc.getPath();
+        if (pathVec.empty()) {
+            // If path is empty, use the source device ID as fallback
+            pathArray.add(sduid.c_str());
+            printf("[HUB] Route packet has empty path, using DeviceID as fallback\n");
+        } else {
+            for (const auto& node : pathVec) {
+                pathArray.add(node);
+            }
+            printf("[HUB] Route packet with path size: %zu\n", pathVec.size());
+        }
     }
 
     std::string jsonstat;
