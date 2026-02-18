@@ -42,14 +42,18 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     doc["payload"]["hops"] = cdp_packet.hopCount;
     doc["payload"]["duckType"] = cdp_packet.duckType;
     doc["payload"]["DeviceID"] = sduid.c_str();
-    doc["payload"]["Message"] = payload.c_str();
     
     // For RREQ/RREP packets, extract and include the routing path
+    // Don't include raw Message field since we're parsing it into structured data
     if (cdp_packet.topic == reservedTopic::rreq || cdp_packet.topic == reservedTopic::rrep) {
         printf("[HUB] Processing route packet, data size: %zu\n", cdp_packet.data.size());
         
         try {
             RouteJSON routeDoc(cdp_packet.data);
+            
+            // Extract origin and destination
+            doc["payload"]["origin"] = routeDoc.getOrigin().data();
+            doc["payload"]["destination"] = routeDoc.getDestination().data();
             
             // Add path as JSON array
             JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
@@ -70,9 +74,14 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
             }
         } catch (const std::exception& e) {
             printf("[HUB] ERROR: Exception parsing RouteJSON: %s, using DeviceID as fallback\n", e.what());
+            doc["payload"]["origin"] = sduid.c_str();
+            doc["payload"]["destination"] = "UNKNOWN";
             JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
             pathArray.add(sduid.c_str());
         }
+    } else {
+        // For non-routing packets, include the raw message
+        doc["payload"]["Message"] = payload.c_str();
     }
 
     std::string jsonstat;
