@@ -88,6 +88,17 @@ private:
     CdpPacket rxPacket(rxData.value());
     logdbg_ln("Got data from radio. size: %d",rxPacket.size());
 
+    // Check bloom filter BEFORE processing to prevent duplicate callbacks
+    bool alreadySeen = this->router.getFilter().bloom_check(rxPacket.muid.data(), MUID_LENGTH);
+    if (alreadySeen) {
+        loginfo_ln("====> Duplicate packet detected (MUID already seen), ignoring");
+        return;
+    }
+
+    // Add to bloom filter immediately to mark as seen
+    this->router.getFilter().bloom_add(rxPacket.muid.data(), MUID_LENGTH);
+
+    // Now invoke callback and process packet
     recvDataCallback(rxPacket);
 
     //Check if Duck is desitination for this packet before relaying
@@ -98,7 +109,6 @@ private:
     } else { //If it's meant for a specific target but not this one
         ifNotBroadcast(rxPacket, err, true);
     }
-    this->router.getFilter().bloom_add(rxPacket.muid.data(), MUID_LENGTH);
   } 
 
   void ifBroadcast(CdpPacket rxPacket, int err) { 
