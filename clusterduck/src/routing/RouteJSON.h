@@ -117,6 +117,15 @@ class RouteJSON {
             }
         }
 
+        /**
+         * @brief Get the full path as a vector of strings
+         * 
+         * @return const reference to the path vector
+         */
+        const std::vector<std::string>& getPath() const {
+            return objPath;
+        }
+
     /**
      * @brief pop the last duck node from the route response path
      *

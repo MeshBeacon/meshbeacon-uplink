@@ -100,6 +100,8 @@ private:
 
     // Now invoke callback and process packet
     recvDataCallback(rxPacket);
+    
+    printf("[PAPADUCK] Callback completed, continuing packet processing\n");
 
     //Check if Duck is desitination for this packet before relaying
     if (duckutils::isEqual(BROADCAST_DUID, rxPacket.dduid)) {
@@ -109,6 +111,8 @@ private:
     } else { //If it's meant for a specific target but not this one
         ifNotBroadcast(rxPacket, err, true);
     }
+    
+    printf("[PAPADUCK] handleReceivedPacket completed\n");
   } 
 
   void ifBroadcast(CdpPacket rxPacket, int err) { 

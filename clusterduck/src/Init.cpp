@@ -1,5 +1,6 @@
 #include <CDP.h>
 #include <queue>
+#include "routing/RouteJSON.h"
 
 // Forward declare C functions for MQTT publishing
 extern "C" {
@@ -42,13 +43,30 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     doc["payload"]["duckType"] = cdp_packet.duckType;
     doc["payload"]["DeviceID"] = sduid.c_str();
     doc["payload"]["Message"] = payload.c_str();
+    
+    // For RREQ/RREP packets, extract and include the routing path
+    if (cdp_packet.topic == reservedTopic::rreq || cdp_packet.topic == reservedTopic::rrep) {
+        RouteJSON routeDoc(cdp_packet.data);
+        
+        // Add path as JSON array
+        JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
+        for (const auto& node : routeDoc.getPath()) {
+            pathArray.add(node);
+        }
+        
+        printf("[HUB] Route packet with path size: %zu\n", routeDoc.getPath().size());
+    }
 
     std::string jsonstat;
     serializeJson(doc, jsonstat);
     printf("%s\n",jsonstat.c_str());
     
     // Publish to MQTT if enabled
+    // Note: mqtt_publish_message() copies the message internally (either to queue or MQTT lib)
+    // so it's safe to pass a pointer to local string
     mqtt_publish_message("", jsonstat.c_str(), jsonstat.length());
+    
+    printf("[HUB] processMessageFromDucks completed\n");
 }
 
 // The callback method simply takes the incoming packet and
