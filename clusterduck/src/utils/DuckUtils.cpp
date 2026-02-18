@@ -19,11 +19,12 @@ bool flipDetectState() {
 
 void  getRandomBytes(int length, uint8_t* bytes) {
   const char* digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const int numDigits = 36; // Length of digits array
   int i;
   for (i = 0; i < length; i++) {
     //TODO: Random generator here isn't seeded properly
     //We can use RSSI value to seed it or use a frame counter if available
-    bytes[i] = digits[random()];    
+    bytes[i] = digits[random() % numDigits]; // Use modulo to keep within bounds
   }
 }
 
