@@ -2239,6 +2239,11 @@ void thread_up(void) {
 
         /* wait a short time if no packets, nor status report */
         if ((nb_pkt == 0) && (send_report == false)) {
+            static int idle_counter = 0;
+            idle_counter++;
+            if (idle_counter % 100 == 0) {  // Print every 10 seconds (100 * 100ms)
+                MSG("DEBUG: [up] No packets received (idle_counter=%d)\n", idle_counter);
+            }
             wait_ms(FETCH_SLEEP_MS);
             continue;
         }
