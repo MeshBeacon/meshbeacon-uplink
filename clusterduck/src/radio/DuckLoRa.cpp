@@ -49,11 +49,11 @@ const LoRaConfigParams DuckLoRa::defaultRadioParams = {
     /* func     = */ onInterrupt
 };
 
-// forward declaration for bridge callback
-static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
-                                      int16_t rssi, float snr,
-                                      uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
-                                      uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate);
+// Forward declaration for bridge callback (non-static to match friend declaration)
+void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
+                               int16_t rssi, float snr,
+                               uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
+                               uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate);
 
 // Helper: Build a test downlink payload from an RX payload.
 // Replace this with LoRaWAN PHYPayload construction when needed.
@@ -478,10 +478,11 @@ void DuckLoRa::onInterrupt(void) {
 }
 
 // Callback invoked when packet_forwarder receives packets via the bridge
-static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
-                                      int16_t rssi, float snr,
-                                      uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
-                                      uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
+// This function needs extern linkage (non-static) to match the friend declaration in DuckLoRa.h
+void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
+                               int16_t rssi, float snr,
+                               uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
+                               uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
 {
     printf("[DUCK_RX_CB] Callback invoked: size=%d rssi=%d snr=%.2f freq=%u\n", 
            size, rssi, snr, freq_hz);
@@ -490,6 +491,10 @@ static void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
     // Use the C++ API to push directly to the polling buffer
     std::vector<uint8_t> packet(payload, payload + size);
     cdp_bridge::push_uplink_packet(packet);
+    
+    // CRITICAL: Set the receive flag so hub.main() knows to process packets
+    // This mimics the behavior of SX127x/SX1262 interrupt handlers
+    DuckLoRa::setReceiveFlag(true);
 }
 
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {

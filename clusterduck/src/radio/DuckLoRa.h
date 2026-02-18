@@ -53,6 +53,10 @@ struct LoRaConfigParams {
 
 class DuckLoRa {
 
+    // Friend declaration to allow the SX1302 callback to set the receive flag
+    friend void duck_rx_from_forwarder_cb(const uint8_t*, uint16_t, int16_t, float,
+                                          uint32_t, uint32_t, uint8_t, uint32_t, uint8_t, uint8_t);
+
     public:
         DuckLoRa() {
             // Initialize the random number generator with a seed based on the current time in a non-arduino way
