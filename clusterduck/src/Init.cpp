@@ -51,9 +51,14 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         try {
             RouteJSON routeDoc(cdp_packet.data);
             
-            // Extract origin and destination
-            doc["payload"]["origin"] = routeDoc.getOrigin().data();
-            doc["payload"]["destination"] = routeDoc.getDestination().data();
+            // Extract origin and destination as strings
+            Duid originDuid = routeDoc.getOrigin();
+            Duid destDuid = routeDoc.getDestination();
+            std::string originStr = duckutils::toString(originDuid);
+            std::string destStr = duckutils::toString(destDuid);
+            
+            doc["payload"]["origin"] = originStr.c_str();
+            doc["payload"]["destination"] = destStr.c_str();
             
             // Add path as JSON array
             JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
