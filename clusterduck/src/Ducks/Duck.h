@@ -319,12 +319,17 @@ class Duck {
      * @returns DUCK_ERR_NONE if the data was sent successfully, an error code otherwise.
      */
     int sendRouteResponse(Duid targetDevice, std::string data){
+      printf("[DUCK] sendRouteResponse: START, data size=%zu\n", data.size());
       std::vector<uint8_t> app_data;
+      printf("[DUCK] Inserting data into vector...\n");
       app_data.insert(app_data.end(), data.begin(), data.end());
+      printf("[DUCK] Calling sendReservedTopicData...\n");
       int err = sendReservedTopicData(targetDevice, reservedTopic::rrep, app_data);
+      printf("[DUCK] sendReservedTopicData returned: %d\n", err);
       if (err != DUCK_ERR_NONE){
         logerr_ln("ERR: failed to send rrep");
       }
+      printf("[DUCK] sendRouteResponse: DONE\n");
       return err;
     }
 
