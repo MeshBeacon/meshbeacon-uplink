@@ -116,15 +116,22 @@ private:
   } 
 
   void ifBroadcast(CdpPacket rxPacket, int err) { 
+    printf("[PAPADUCK] ifBroadcast START, topic=%d\n", (int)rxPacket.topic);
     switch(rxPacket.topic) {
         case reservedTopic::rreq: {
+            printf("[PAPADUCK] Processing RREQ, hopCount=%d\n", rxPacket.hopCount);
             if(rxPacket.hopCount <= 0){
-                loginfo_ln("RREQ received from %s. Sending Response!", rxPacket.sduid.data());
+                std::string sduidStr = duckutils::toString(rxPacket.sduid);
+                loginfo_ln("RREQ received from %s. Sending Response!", sduidStr.c_str());
+                printf("[PAPADUCK] Creating RouteJSON for RREP...\n");
                 RouteJSON rrepDoc = RouteJSON(rxPacket.sduid, this->duid);
+                printf("[PAPADUCK] Adding to path...\n");
                 rrepDoc.addToPath(this->duid);
+                printf("[PAPADUCK] Sending route response...\n");
                 this->sendRouteResponse(rxPacket.sduid, rrepDoc.asString());
                 // Update routing table with signal info
                 this->router.insertIntoRoutingTable(rxPacket.sduid, rxPacket.sduid, this->getSignalScore()); //can only be one hop away
+                printf("[PAPADUCK] RREQ processing completed\n");
             }
             break;
         }
@@ -187,7 +194,8 @@ void ifNotBroadcast(CdpPacket rxPacket, int err, bool relay = false) {
             RouteJSON rrepDoc = RouteJSON(rxPacket.data);
             std::optional<Duid> last = rrepDoc.getlastInPath();
             Duid lastInPath = last.has_value() ? last.value() : rxPacket.sduid;
-            loginfo_ln("Received Route Response from DUID: %s", rxPacket.sduid.data(), rxPacket.sduid.size());
+            std::string sduidStr = duckutils::toString(rxPacket.sduid);
+            loginfo_ln("Received Route Response from DUID: %s", sduidStr.c_str());
 
             std::optional<Duid> nextHop = this->router.getBestNextHop(rrepDoc.getDestination());
             if((rrepDoc.getDestination() != this->duid) && (nextHop.has_value()) && (nextHop.value() !=  rxPacket.sduid)){
