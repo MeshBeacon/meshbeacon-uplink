@@ -203,6 +203,15 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
     if (forwarderPkt.has_value()) {
         packetBytes = std::move(forwarderPkt.value());
         loginfo_ln("readReceivedData(): got packet from forwarder bridge size=%d", (int)packetBytes.size());
+        
+        // Clear the receive flag only if the queue is now empty
+        // This allows hub.main() to continue processing remaining packets
+        if (!cdp_bridge::has_uplink_packet()) {
+            setReceiveFlag(false);
+            loginfo_ln("readReceivedData(): queue empty, clearing receive flag");
+        } else {
+            loginfo_ln("readReceivedData(): queue has more packets, keeping receive flag set");
+        }
     } /* else {
         // Fallback: read from radio as before
         int packet_length = lora.getPacketLength();
