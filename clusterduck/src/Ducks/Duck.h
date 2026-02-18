@@ -439,20 +439,30 @@ class Duck {
      * @return DUCK_ERR_NONE if the data was sent successfully, an error code otherwise.
      */
     int sendReservedTopicData(Duid targetDevice, reservedTopic topic, std::vector<uint8_t> data){
+      printf("[DUCK] sendReservedTopicData: START, topic=%d, data size=%zu\n", (int)topic, data.size());
       int err = DUCK_ERR_NONE;
+      printf("[DUCK] Checking network state...\n");
       if((router.getNetworkState() == NetworkState::PUBLIC) || ((router.getNetworkState() == NetworkState::SEARCHING) && (topic == reservedTopic::rreq))){
+        printf("[DUCK] Network state OK, creating CdpPacket...\n");
         CdpPacket txPacket = CdpPacket(targetDevice, topic, data, this->duid, this->getType());
+        printf("[DUCK] Assigning unique message ID...\n");
         router.getFilter().assignUniqueMessageId(txPacket);
+        printf("[DUCK] Preparing packet for sending...\n");
         err = txPacket.prepareForSending();
         if (err != DUCK_ERR_NONE) {
           logerr_ln("ERROR Failed to build packet, err = " + err);
           return err;
         }
+        printf("[DUCK] Sending data via radio...\n");
         err = duckRadio.sendData(txPacket.asBytes());
+        printf("[DUCK] Radio sendData returned: %d\n", err);
         if (err != DUCK_ERR_NONE) {
           logerr_ln("ERROR Lora sendData failed, err = %d", err);
         }
-      } 
+      } else {
+        printf("[DUCK] Network state not ready, skipping send\n");
+      }
+      printf("[DUCK] sendReservedTopicData: DONE\n");
       return err;
     }
 
