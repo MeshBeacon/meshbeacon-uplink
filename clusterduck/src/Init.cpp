@@ -29,19 +29,18 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     // Counter Message
     std::string payload(cdp_packet.data.begin(), cdp_packet.data.end());
 
-    // Forward the counter message to the MQTT broker
-    // This is a simple example, but you can do anything you want with the message here
-    // This example shows how the message from be transformed into something that matches your application
-    // uint32_t msgId = esp_random();
+    // Build JSON message matching official PapaDuck format
+    // Reference: ClusterDuck-Protocol/examples/Basic-Ducks/PapaDuck/PapaDuck.ino
     doc["from"] = "hub";
     doc["to"] = "controller";
-    doc["RE"] = false; // This flag is used to indicate if the controller should respond to this message
+    doc["RE"] = false;
     doc["eventType"] = cdpTopic.c_str();
-    doc["MessageID"].set(muid);
-    doc["payload"]["hops"].set(cdp_packet.hopCount);
-    doc["payload"]["duckType"].set(cdp_packet.duckType);
+    doc["MessageID"] = muid.c_str();
+    
+    // Payload fields at root level (official PapaDuck format)
+    doc["payload"]["hops"] = cdp_packet.hopCount;
+    doc["payload"]["duckType"] = cdp_packet.duckType;
     doc["payload"]["DeviceID"] = sduid.c_str();
-
     doc["payload"]["Message"] = payload.c_str();
 
     std::string jsonstat;
