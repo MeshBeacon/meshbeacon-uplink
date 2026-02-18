@@ -3196,8 +3196,10 @@ void thread_duck(void) {
         /* Call the ClusterDuck main loop to process received packets */
         hub_run_loop();
         
-        /* Small delay to avoid consuming too much CPU */
-        wait_ms(10);
+        /* Sleep to reduce CPU usage - ClusterDuck processes packets via 
+           callbacks from the uplink thread, so this thread only needs to 
+           do periodic housekeeping and MQTT reconnection attempts */
+        wait_ms(100);  // 10 times per second is sufficient
     }
     
     MSG("\nINFO: End of ClusterDuck processing thread\n");
