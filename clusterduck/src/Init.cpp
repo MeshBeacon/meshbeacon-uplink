@@ -82,20 +82,7 @@ extern "C" void* hub_init_and_setup(void) {
 
 // C wrapper to call the hub's main processing loop
 extern "C" void hub_run_loop(void) {
-    static int call_count = 0;
-    call_count++;
-    
-    // Log every 1000 calls (every 10 seconds at 10ms intervals)
-    if (call_count % 1000 == 0) {
-        printf("[HUB] hub_run_loop called %d times\n", call_count);
-    }
-    
-    try {
-        // Process any received packets
-        hub.processPackets();
-    } catch (const std::exception& e) {
-        printf("[HUB] ERROR in packet processing: %s\n", e.what());
-    } catch (...) {
-        printf("[HUB] ERROR: Unknown exception in packet processing\n");
-    }
+    // Call the hub's main() method which processes radio interrupts
+    // and handles received packets
+    hub.main();
 }
