@@ -2288,7 +2288,25 @@ void thread_up(void) {
             payload = p->payload;
             size = p->size;
 
-            // Pass packet to ClusterDuck bridge
+            // Validate packet before passing to ClusterDuck
+            if (size == 0 || size > 255) {
+                MSG("WARNING: [%d/%d] Skipping invalid packet (size=%u)\n", i+1, nb_pkt, size);
+                continue;
+            }
+            
+            if (payload == NULL) {
+                MSG("WARNING: [%d/%d] Skipping packet with NULL payload\n", i+1, nb_pkt);
+                continue;
+            }
+            
+            // Check for invalid coding rate (0 is invalid in LoRa)
+            if (coderate == 0 || coderate > CR_LORA_4_8) {
+                MSG("WARNING: [%d/%d] Skipping packet with invalid coding rate (%u)\n", 
+                    i+1, nb_pkt, coderate);
+                continue;
+            }
+
+            // Pass validated packet to ClusterDuck bridge
             MSG("INFO: [%d/%d] Passing packet to ClusterDuck (size=%u, rssi=%d, snr=%.1f)\n", 
                        i+1, nb_pkt, size, rssi, snr);
             cdp_bridge_handle_uplink(payload, size,
