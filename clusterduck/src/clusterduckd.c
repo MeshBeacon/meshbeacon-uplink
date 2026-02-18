@@ -191,6 +191,26 @@ static int mqtt_keepalive = 60; /* MQTT keepalive interval */
 static bool mqtt_use_tls = false; /* Use TLS for MQTT */
 static char mqtt_ca_cert_file[256] = ""; /* CA certificate file path */
 
+/* MQTT reconnection state */
+static time_t mqtt_last_reconnect_attempt = 0;
+static int mqtt_reconnect_delay = 5; /* Initial reconnection delay in seconds */
+static int mqtt_max_reconnect_delay = 300; /* Maximum reconnection delay (5 minutes) */
+static int mqtt_reconnect_attempts = 0;
+
+/* MQTT message queue for offline buffering */
+#define MQTT_QUEUE_SIZE 100 /* Maximum number of messages to queue when disconnected */
+typedef struct {
+    char topic[128];
+    char* message;
+    int length;
+} mqtt_queued_message_t;
+
+static mqtt_queued_message_t mqtt_message_queue[MQTT_QUEUE_SIZE];
+static int mqtt_queue_head = 0;
+static int mqtt_queue_tail = 0;
+static int mqtt_queue_count = 0;
+static pthread_mutex_t mqtt_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 /* gateway <-> MAC protocol variables */
 static uint32_t net_mac_h; /* Most Significant Nibble, network order */
 static uint32_t net_mac_l; /* Least Significant Nibble, network order */
@@ -330,6 +350,10 @@ static void gps_process_coords(void);
 
 static int get_tx_gain_lut_index(uint8_t rf_chain, int8_t rf_power, uint8_t * lut_index);
 
+/* MQTT function declarations */
+static int mqtt_queue_message(const char* topic, const char* message, int length);
+static int mqtt_publish_queued_messages(void);
+
 /* threads */
 void thread_up(void);
 void thread_down(void);
@@ -345,17 +369,26 @@ int mqtt_init_and_connect(void) {
         return 0; // MQTT disabled, skip
     }
     
+    // If client already exists, clean it up first
+    if (mqtt_client != NULL) {
+        MQTTClient_disconnect(mqtt_client, 100);
+        MQTTClient_destroy(&mqtt_client);
+        mqtt_client = NULL;
+    }
+    
     // Create MQTT broker address string
     char broker_address[256];
     snprintf(broker_address, sizeof(broker_address), "tcp://%s:%d", mqtt_server, mqtt_port);
     
-    MSG("[MQTT] Creating MQTT client for broker: %s\n", broker_address);
+    MSG("[MQTT] Creating MQTT client for broker: %s (attempt %d)\n", 
+        broker_address, mqtt_reconnect_attempts + 1);
     
     // Create MQTT client
     int rc = MQTTClient_create(&mqtt_client, broker_address, mqtt_client_id,
                                 MQTTCLIENT_PERSISTENCE_NONE, NULL);
     if (rc != MQTTCLIENT_SUCCESS) {
         MSG("ERROR: [MQTT] Failed to create MQTT client, return code %d\n", rc);
+        mqtt_reconnect_attempts++;
         return -1;
     }
     
@@ -384,10 +417,15 @@ int mqtt_init_and_connect(void) {
         MSG("ERROR: [MQTT] Failed to connect to broker, return code %d\n", rc);
         MQTTClient_destroy(&mqtt_client);
         mqtt_client = NULL;
+        mqtt_reconnect_attempts++;
         return -1;
     }
     
     MSG("[MQTT] Successfully connected to broker\n");
+    
+    // Reset reconnection state on successful connection
+    mqtt_reconnect_attempts = 0;
+    mqtt_reconnect_delay = 5; // Reset to initial delay
     
     // Subscribe to incoming topic if configured
     if (strlen(mqtt_sub_topic) > 0) {
@@ -399,26 +437,164 @@ int mqtt_init_and_connect(void) {
         }
     }
     
+    // Publish any queued messages from previous disconnections
+    if (mqtt_queue_count > 0) {
+        mqtt_publish_queued_messages();
+    }
+    
     return 0;
 }
 
-/* MQTT Publishing function */
-void mqtt_publish_message(const char* topic, const char* message, int length) {
-    if (!mqtt_enabled || mqtt_client == NULL) {
-        return; // MQTT disabled or not connected, skip
+/* MQTT Reconnection with Exponential Backoff */
+int mqtt_reconnect_with_backoff(void) {
+    time_t now = time(NULL);
+    
+    // Check if enough time has passed since last reconnection attempt
+    if (now - mqtt_last_reconnect_attempt < mqtt_reconnect_delay) {
+        return -1; // Too soon to retry
     }
     
-    // Check if client is still connected
-    if (!MQTTClient_isConnected(mqtt_client)) {
-        MSG("WARNING: [MQTT] Client disconnected, attempting to reconnect...\n");
-        if (mqtt_init_and_connect() != 0) {
-            MSG("ERROR: [MQTT] Reconnection failed\n");
-            return;
+    // Update last attempt time
+    mqtt_last_reconnect_attempt = now;
+    
+    MSG("[MQTT] Attempting reconnection (delay was %d seconds)...\n", mqtt_reconnect_delay);
+    
+    // Try to reconnect
+    int result = mqtt_init_and_connect();
+    
+    if (result != 0) {
+        // Connection failed, increase backoff delay exponentially
+        mqtt_reconnect_delay = mqtt_reconnect_delay * 2;
+        if (mqtt_reconnect_delay > mqtt_max_reconnect_delay) {
+            mqtt_reconnect_delay = mqtt_max_reconnect_delay;
         }
+        MSG("[MQTT] Reconnection failed. Next attempt in %d seconds.\n", mqtt_reconnect_delay);
+    } else {
+        MSG("[MQTT] Reconnection successful!\n");
+        
+        // Publish any queued messages
+        if (mqtt_queue_count > 0) {
+            mqtt_publish_queued_messages();
+        }
+    }
+    
+    return result;
+}
+
+/* Queue an MQTT message when disconnected */
+static int mqtt_queue_message(const char* topic, const char* message, int length) {
+    pthread_mutex_lock(&mqtt_queue_mutex);
+    
+    if (mqtt_queue_count >= MQTT_QUEUE_SIZE) {
+        MSG("WARNING: [MQTT] Queue full (%d messages), dropping oldest message\n", MQTT_QUEUE_SIZE);
+        
+        // Free the oldest message
+        if (mqtt_message_queue[mqtt_queue_tail].message != NULL) {
+            free(mqtt_message_queue[mqtt_queue_tail].message);
+            mqtt_message_queue[mqtt_queue_tail].message = NULL;
+        }
+        
+        // Move tail forward (drop oldest)
+        mqtt_queue_tail = (mqtt_queue_tail + 1) % MQTT_QUEUE_SIZE;
+        mqtt_queue_count--;
+    }
+    
+    // Add message to queue
+    strncpy(mqtt_message_queue[mqtt_queue_head].topic, topic, sizeof(mqtt_message_queue[mqtt_queue_head].topic) - 1);
+    mqtt_message_queue[mqtt_queue_head].topic[sizeof(mqtt_message_queue[mqtt_queue_head].topic) - 1] = '\0';
+    
+    mqtt_message_queue[mqtt_queue_head].message = malloc(length + 1);
+    if (mqtt_message_queue[mqtt_queue_head].message == NULL) {
+        MSG("ERROR: [MQTT] Failed to allocate memory for queued message\n");
+        pthread_mutex_unlock(&mqtt_queue_mutex);
+        return -1;
+    }
+    
+    memcpy(mqtt_message_queue[mqtt_queue_head].message, message, length);
+    mqtt_message_queue[mqtt_queue_head].message[length] = '\0';
+    mqtt_message_queue[mqtt_queue_head].length = length;
+    
+    mqtt_queue_head = (mqtt_queue_head + 1) % MQTT_QUEUE_SIZE;
+    mqtt_queue_count++;
+    
+    MSG("[MQTT] Message queued (%d/%d in queue)\n", mqtt_queue_count, MQTT_QUEUE_SIZE);
+    
+    pthread_mutex_unlock(&mqtt_queue_mutex);
+    return 0;
+}
+
+/* Publish all queued messages */
+static int mqtt_publish_queued_messages(void) {
+    int published = 0;
+    
+    pthread_mutex_lock(&mqtt_queue_mutex);
+    
+    MSG("[MQTT] Publishing %d queued message(s)\n", mqtt_queue_count);
+    
+    while (mqtt_queue_count > 0) {
+        // Get message from tail
+        mqtt_queued_message_t* msg = &mqtt_message_queue[mqtt_queue_tail];
+        
+        // Publish message directly without queueing again
+        MQTTClient_message pubmsg = MQTTClient_message_initializer;
+        pubmsg.payload = msg->message;
+        pubmsg.payloadlen = msg->length;
+        pubmsg.qos = 1;
+        pubmsg.retained = 0;
+        
+        MQTTClient_deliveryToken token;
+        int rc = MQTTClient_publishMessage(mqtt_client, msg->topic, &pubmsg, &token);
+        
+        if (rc != MQTTCLIENT_SUCCESS) {
+            MSG("ERROR: [MQTT] Failed to publish queued message, return code %d\n", rc);
+            // Stop processing queue on error
+            pthread_mutex_unlock(&mqtt_queue_mutex);
+            return published;
+        }
+        
+        // Wait for delivery
+        rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
+        if (rc != MQTTCLIENT_SUCCESS) {
+            MSG("WARNING: [MQTT] Queued message delivery timeout\n");
+        }
+        
+        // Free message and move to next
+        free(msg->message);
+        msg->message = NULL;
+        
+        mqtt_queue_tail = (mqtt_queue_tail + 1) % MQTT_QUEUE_SIZE;
+        mqtt_queue_count--;
+        published++;
+    }
+    
+    MSG("[MQTT] Successfully published %d queued message(s)\n", published);
+    
+    pthread_mutex_unlock(&mqtt_queue_mutex);
+    return published;
+}
+
+
+/* MQTT Publishing function */
+void mqtt_publish_message(const char* topic, const char* message, int length) {
+    if (!mqtt_enabled) {
+        return; // MQTT disabled, skip
     }
     
     // Use configured topic if empty topic provided
     const char* pub_topic = (topic && strlen(topic) > 0) ? topic : mqtt_pub_topic;
+    
+    // Check if client is connected
+    if (mqtt_client == NULL || !MQTTClient_isConnected(mqtt_client)) {
+        MSG("WARNING: [MQTT] Client disconnected, queueing message\n");
+        
+        // Queue the message for later
+        mqtt_queue_message(pub_topic, message, length);
+        
+        // Try to reconnect with backoff
+        mqtt_reconnect_with_backoff();
+        
+        return;
+    }
     
     MSG("[MQTT] Publishing to topic: %s\n", pub_topic);
     MSG("[MQTT] Message (%d bytes): %s\n", length, message);
@@ -434,6 +610,8 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     int rc = MQTTClient_publishMessage(mqtt_client, pub_topic, &pubmsg, &token);
     if (rc != MQTTCLIENT_SUCCESS) {
         MSG("ERROR: [MQTT] Failed to publish message, return code %d\n", rc);
+        // Mark client as disconnected so we'll try to reconnect on next message
+        mqtt_client = NULL;
         return;
     }
     
@@ -1948,6 +2126,18 @@ int main(int argc, char ** argv)
         /* disconnect MQTT client */
         if (mqtt_enabled && mqtt_client != NULL) {
             MSG("INFO: Disconnecting MQTT client...\n");
+            
+            // Clean up message queue
+            pthread_mutex_lock(&mqtt_queue_mutex);
+            for (int i = 0; i < MQTT_QUEUE_SIZE; i++) {
+                if (mqtt_message_queue[i].message != NULL) {
+                    free(mqtt_message_queue[i].message);
+                    mqtt_message_queue[i].message = NULL;
+                }
+            }
+            mqtt_queue_count = 0;
+            pthread_mutex_unlock(&mqtt_queue_mutex);
+            
             MQTTClient_disconnect(mqtt_client, 1000);
             MQTTClient_destroy(&mqtt_client);
             MSG("INFO: MQTT client disconnected\n");
