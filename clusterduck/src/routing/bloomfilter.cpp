@@ -104,13 +104,24 @@ void BloomFilter::set_hash_results(unsigned char* msg, int msgSize,
 }
 
 void BloomFilter::assignUniqueMessageId(CdpPacket& packet) {
-
+    printf("[BLOOMFILTER] assignUniqueMessageId: START\n");
+    
     bool getNewUnique = true;
+    int attempts = 0;
     while (getNewUnique) {
+      printf("[BLOOMFILTER] Attempt %d: Getting random bytes...\n", ++attempts);
       duckutils::getRandomBytes(MUID_LENGTH, packet.muid.data());
+      printf("[BLOOMFILTER] Random bytes generated, checking bloom filter...\n");
       getNewUnique = this->bloom_check(packet.muid.data(), MUID_LENGTH);
+      printf("[BLOOMFILTER] Bloom check result: %d (0=unique, 1=collision)\n", getNewUnique);
       loginfo_ln("prepareForSending: new MUID -> %s",duckutils::convertToHex(packet.muid.data(), MUID_LENGTH).c_str());
+      
+      if (attempts > 100) {
+        printf("[BLOOMFILTER] WARNING: Too many attempts (%d), using current MUID\n", attempts);
+        break;
+      }
     }
+    printf("[BLOOMFILTER] assignUniqueMessageId: DONE\n");
 }
 
 int BloomFilter::bloom_check(unsigned char* msg, int msgSize) {
