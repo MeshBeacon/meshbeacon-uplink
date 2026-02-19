@@ -133,15 +133,7 @@ extern "C" void* hub_init_and_setup(void) {
 
 // C wrapper to call the hub's main processing loop
 extern "C" void hub_run_loop(void) {
-    static int loop_count = 0;
-    
     // PapaDuck in gateway mode uses processPackets() instead of main()
     // main() has network joining logic which PapaDucks don't need
     hub.processPackets();
-    
-    // Periodic heartbeat every 100 iterations (10 seconds at 100ms sleep)
-    loop_count++;
-    if (loop_count % 100 == 0) {
-        printf("[HUB] ClusterDuck thread alive (loop %d)\n", loop_count);
-    }
 }
