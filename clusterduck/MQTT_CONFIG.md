@@ -17,9 +17,13 @@ MQTT settings are configured in the `global_conf.json` file under the `mqtt_conf
     "server": "test.mosquitto.org",
     "port": 1883,
     "client_id": "papa-duck-mqtt-1",
-    "pub_topic": "hub/event",
-    "sub_topic": "incoming/say_hello",
-    "keepalive": 60
+    "keepalive": 60,
+    "topics": {
+      "publish": "hub/event",
+      "subscribe": "hub/command",
+      "response": "hub/response",
+      "description": "publish: Gateway sends received packets | subscribe: Gateway receives commands | response: Gateway sends command acknowledgments"
+    }
   }
 }
 ```
@@ -35,11 +39,14 @@ MQTT settings are configured in the `global_conf.json` file under the `mqtt_conf
     "client_id": "papa-duck-mqtt-1",
     "username": "",
     "password": "",
-    "pub_topic": "hub/event",
-    "sub_topic": "incoming/say_hello",
     "keepalive": 60,
     "use_tls": true,
-    "ca_cert_file": "/etc/ssl/certs/ca-certificates.crt"
+    "ca_cert_file": "/etc/ssl/certs/ca-certificates.crt",
+    "topics": {
+      "publish": "hub/event",
+      "subscribe": "hub/command",
+      "response": "hub/response"
+    }
   }
 }
 ```
@@ -54,17 +61,37 @@ MQTT settings are configured in the `global_conf.json` file under the `mqtt_conf
 | `client_id` | string | `"papa-duck-mqtt-1"` | Unique MQTT client identifier (must be unique per broker) |
 | `username` | string | `""` | MQTT authentication username (optional) |
 | `password` | string | `""` | MQTT authentication password (optional) |
-| `pub_topic` | string | `"hub/event"` | Topic where PapaDuck publishes CDP messages |
-| `sub_topic` | string | `"incoming/say_hello"` | Topic for receiving downlink commands (optional) |
+| `topics.publish` | string | `"hub/event"` | Topic where gateway publishes packets from MamaDucks |
+| `topics.subscribe` | string | `"hub/command"` | Topic for receiving commands to forward to MamaDucks |
+| `topics.response` | string | `"hub/response"` | Topic for publishing command acknowledgments |
 | `keepalive` | integer | `60` | MQTT keepalive interval in seconds |
 | `use_tls` | boolean | `false` | Enable TLS/SSL encryption |
 | `ca_cert_file` | string | `""` | Path to CA certificate file for TLS verification |
 
-**Note**: The `pub_topic` and `sub_topic` values match the standard ClusterDuck Protocol PapaDuck MQTT topics. The PapaDuck publishes all CDP messages to `hub/event` with the CDP topic embedded in the `eventType` field.
+## Topic Overview
+
+The gateway uses three MQTT topics for bidirectional communication:
+
+1. **Publish Topic** (`topics.publish` = `"hub/event"` by default)
+   - Gateway publishes packets received from MamaDucks
+   - Contains sensor data, status updates, and messages from the mesh network
+   - Standard ClusterDuck Protocol PapaDuck message format
+
+2. **Subscribe Topic** (`topics.subscribe` = `"hub/command"` by default)
+   - Gateway subscribes to this topic for incoming commands
+   - Commands are forwarded to MamaDucks via LoRa
+   - JSON format: `{"target":"BROADCAST|DEVICEID","topic":20-255,"message":"text"}`
+
+3. **Response Topic** (`topics.response` = `"hub/response"` by default)
+   - Gateway publishes command acknowledgments here
+   - Confirms successful/failed command forwarding
+   - JSON format: `{"status":"success|error","target":"...","topic":N,"message":"..."}`
+
+**Configuration Format**: All topics are configured under the nested `topics` object in `mqtt_conf`.
 
 ## Message Format
 
-The gateway publishes messages in the standard ClusterDuck Protocol PapaDuck format. All CDP messages are published to the `hub/event` topic with the CDP topic name in the `eventType` field.
+The gateway publishes messages in the standard ClusterDuck Protocol PapaDuck format. All CDP messages are published to the `topics.publish` topic with the CDP topic name in the `eventType` field.
 
 ### Standard PapaDuck Message Format
 
@@ -116,8 +143,10 @@ Matches the official PapaDuck example configuration:
     "server": "test.mosquitto.org",
     "port": 1883,
     "client_id": "papa-duck-mqtt-1",
-    "pub_topic": "hub/event",
-    "sub_topic": "incoming/say_hello",
+    "topics": {
+      "publish": "hub/event",
+      "subscribe": "incoming/say_hello"
+    },
     "keepalive": 60
   }
 }
@@ -132,8 +161,10 @@ Matches the official PapaDuck example configuration:
     "server": "test.mosquitto.org",
     "port": 8883,
     "client_id": "papa-duck-mqtt-1",
-    "pub_topic": "hub/event",
-    "sub_topic": "incoming/say_hello",
+    "topics": {
+      "publish": "hub/event",
+      "subscribe": "incoming/say_hello"
+    },
     "keepalive": 60,
     "use_tls": true,
     "ca_cert_file": "/etc/ssl/certs/ca-certificates.crt"
@@ -154,8 +185,11 @@ Matches the official PapaDuck example configuration:
     "client_id": "papa-duck-prod-001",
     "username": "gateway_user",
     "password": "secure_password",
-    "pub_topic": "hub/event",
-    "sub_topic": "incoming/say_hello",
+    "topics": {
+      "publish": "hub/event",
+      "subscribe": "incoming/say_hello",
+      "response": "hub/response"
+    },
     "keepalive": 60,
     "use_tls": true,
     "ca_cert_file": "/etc/ssl/certs/ca-certificates.crt"
@@ -174,7 +208,9 @@ For AWS IoT Core integration, follow the AWS-PapaDuck example pattern:
     "server": "your-endpoint.iot.us-east-1.amazonaws.com",
     "port": 8883,
     "client_id": "PAPADUCK",
-    "pub_topic": "owl/device/PAPADUCK/evt",
+    "topics": {
+      "publish": "owl/device/PAPADUCK/evt"
+    },
     "keepalive": 60,
     "use_tls": true,
     "ca_cert_file": "/etc/ssl/certs/AmazonRootCA1.pem"
@@ -193,7 +229,9 @@ For AWS IoT Core integration, follow the AWS-PapaDuck example pattern:
     "server": "localhost",
     "port": 1883,
     "client_id": "local-gateway",
-    "pub_topic": "hub/event"
+    "topics": {
+      "publish": "hub/event"
+    }
   }
 }
 ```
