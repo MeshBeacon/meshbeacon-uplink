@@ -3387,15 +3387,20 @@ void thread_duck(void) {
         /* Call the ClusterDuck main loop to process received packets */
         hub_run_loop();
         
-        /* Periodic MQTT connection health check every 30 seconds (300 * 100ms) */
+        /* Periodic MQTT connection health check */
         if (mqtt_enabled) {
             mqtt_check_counter++;
-            if (mqtt_check_counter >= 300) {
+            
+            // Check more frequently if we have queued messages (every 5 seconds)
+            // Otherwise check every 30 seconds
+            int check_interval = (mqtt_queue_count > 0) ? 50 : 300;  // 50 * 100ms = 5s, 300 * 100ms = 30s
+            
+            if (mqtt_check_counter >= check_interval) {
                 mqtt_check_counter = 0;
                 
-                // Check if connection is still alive
-                if (mqtt_client != NULL && !MQTTClient_isConnected(mqtt_client)) {
-                    MSG("WARNING: [MQTT] Connection lost (queue count=%d), attempting reconnection...\n", mqtt_queue_count);
+                // Check if connection is still alive or needs reconnection
+                if (mqtt_needs_reconnect || (mqtt_client != NULL && !MQTTClient_isConnected(mqtt_client))) {
+                    MSG("WARNING: [MQTT] Connection lost or needs reconnect (queue count=%d), attempting reconnection...\n", mqtt_queue_count);
                     int result = mqtt_reconnect_with_backoff();
                     if (result == 0) {
                         MSG("[MQTT] Reconnection successful from health check\n");
