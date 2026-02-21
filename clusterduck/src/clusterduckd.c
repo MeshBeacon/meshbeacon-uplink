@@ -83,7 +83,7 @@ extern "C" {
 #define CDPCFG_RF_LORA_FREQ_HZ 923000000
 #define CDPCFG_RF_LORA_BW 125.0f
 #define CDPCFG_RF_LORA_SF 7
-#define CDPCFG_RF_LORA_TXPOW 27
+#define CDPCFG_RF_LORA_TXPOW 14
 #define CDPCFG_RF_LORA_GAIN 0
 
 /* -------------------------------------------------------------------------- */
