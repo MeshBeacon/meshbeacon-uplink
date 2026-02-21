@@ -213,6 +213,7 @@ static int mqtt_queue_head = 0;
 static int mqtt_queue_tail = 0;
 static int mqtt_queue_count = 0;
 static pthread_mutex_t mqtt_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mqtt_reconnect_mutex = PTHREAD_MUTEX_INITIALIZER;  /* prevent parallel reconnection attempts */
 
 /* gateway <-> MAC protocol variables */
 static uint32_t net_mac_h; /* Most Significant Nibble, network order */
@@ -486,7 +487,10 @@ int mqtt_init_and_connect(void) {
     
     // If client already exists, clean it up first
     if (mqtt_client != NULL) {
-        MQTTClient_disconnect(mqtt_client, 100);
+        // Only disconnect if actually connected
+        if (MQTTClient_isConnected(mqtt_client)) {
+            MQTTClient_disconnect(mqtt_client, 100);
+        }
         MQTTClient_destroy(&mqtt_client);
         mqtt_client = NULL;
     }
@@ -568,10 +572,13 @@ int mqtt_init_and_connect(void) {
 
 /* MQTT Reconnection with Exponential Backoff */
 int mqtt_reconnect_with_backoff(void) {
+    pthread_mutex_lock(&mqtt_reconnect_mutex);
+    
     time_t now = time(NULL);
     
     // Check if enough time has passed since last reconnection attempt
     if (now - mqtt_last_reconnect_attempt < mqtt_reconnect_delay) {
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
         return -1; // Too soon to retry
     }
     
@@ -598,6 +605,8 @@ int mqtt_reconnect_with_backoff(void) {
             mqtt_publish_queued_messages();
         }
     }
+    
+    pthread_mutex_unlock(&mqtt_reconnect_mutex);
     
     return result;
 }
@@ -704,6 +713,9 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     // Use configured topic if empty topic provided
     const char* pub_topic = (topic && strlen(topic) > 0) ? topic : mqtt_pub_topic;
     
+    // Lock for thread-safe access to mqtt_client
+    pthread_mutex_lock(&mqtt_reconnect_mutex);
+    
     // Check if client is connected
     if (mqtt_client == NULL || !MQTTClient_isConnected(mqtt_client)) {
         MSG("WARNING: [MQTT] Client disconnected, queueing message\n");
@@ -711,7 +723,9 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
         // Queue the message for later
         mqtt_queue_message(pub_topic, message, length);
         
-        // Try to reconnect with backoff
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
+        
+        // Try to reconnect with backoff (this will acquire the mutex again)
         mqtt_reconnect_with_backoff();
         
         return;
@@ -736,6 +750,7 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
         MQTTClient_disconnect(mqtt_client, 100);
         MQTTClient_destroy(&mqtt_client);
         mqtt_client = NULL;
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
         return;
     }
     
@@ -745,13 +760,16 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
         MSG("WARNING: [MQTT] Message delivery timeout. Queueing message and reconnecting.\n");
         mqtt_queue_message(pub_topic, message, length);
         // Mark connection as failed and cleanup
-        MQTTClient_disconnect(mqtt_client, 100);
+        if (MQTTClient_isConnected(mqtt_client)) {
+            MQTTClient_disconnect(mqtt_client, 100);
+        }
         MQTTClient_destroy(&mqtt_client);
         mqtt_client = NULL;
-        // Try to reconnect
-        mqtt_reconnect_with_backoff();
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
+        // Note: reconnection will be handled by health check in thread_duck
     } else {
         MSG("[MQTT] Message published successfully\n");
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
     }
 }
 
