@@ -611,8 +611,11 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     MQTTClient_deliveryToken token;
     int rc = MQTTClient_publishMessage(mqtt_client, pub_topic, &pubmsg, &token);
     if (rc != MQTTCLIENT_SUCCESS) {
-        MSG("ERROR: [MQTT] Failed to publish message, return code %d\n", rc);
-        // Mark client as disconnected so we'll try to reconnect on next message
+        MSG("ERROR: [MQTT] Failed to publish message, return code %d. Queueing message.\n", rc);
+        mqtt_queue_message(pub_topic, message, length);
+        // Mark client as disconnected so we'll try to reconnect
+        MQTTClient_disconnect(mqtt_client, 100);
+        MQTTClient_destroy(&mqtt_client);
         mqtt_client = NULL;
         return;
     }
@@ -620,7 +623,14 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     // Wait for message to be delivered
     rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
     if (rc != MQTTCLIENT_SUCCESS) {
-        MSG("WARNING: [MQTT] Message delivery timeout\n");
+        MSG("WARNING: [MQTT] Message delivery timeout. Queueing message and reconnecting.\n");
+        mqtt_queue_message(pub_topic, message, length);
+        // Mark connection as failed and cleanup
+        MQTTClient_disconnect(mqtt_client, 100);
+        MQTTClient_destroy(&mqtt_client);
+        mqtt_client = NULL;
+        // Try to reconnect
+        mqtt_reconnect_with_backoff();
     } else {
         MSG("[MQTT] Message published successfully\n");
     }
