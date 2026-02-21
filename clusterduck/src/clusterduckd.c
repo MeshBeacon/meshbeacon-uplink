@@ -3209,10 +3209,27 @@ void thread_duck(void) {
     wait_ms(1000);
     MSG("INFO: ClusterDuck thread starting main loop\n");
     
+    /* Counter for periodic MQTT health check (every 30 seconds) */
+    int mqtt_check_counter = 0;
+    
     /* Main loop: call hub.main() to process ClusterDuck packets */
     while (!exit_sig && !quit_sig) {
         /* Call the ClusterDuck main loop to process received packets */
         hub_run_loop();
+        
+        /* Periodic MQTT connection health check every 30 seconds (300 * 100ms) */
+        if (mqtt_enabled) {
+            mqtt_check_counter++;
+            if (mqtt_check_counter >= 300) {
+                mqtt_check_counter = 0;
+                
+                // Check if connection is still alive
+                if (mqtt_client != NULL && !MQTTClient_isConnected(mqtt_client)) {
+                    MSG("WARNING: [MQTT] Connection lost, attempting reconnection...\n");
+                    mqtt_reconnect_with_backoff();
+                }
+            }
+        }
         
         /* Sleep to reduce CPU usage - ClusterDuck processes packets via 
            callbacks from the uplink thread, so this thread only needs to 
