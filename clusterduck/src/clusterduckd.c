@@ -33,6 +33,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include <inttypes.h>       /* PRIx64, PRIu64... */
 
 #include <string.h>         /* memset */
+#include <strings.h>        /* strcasecmp */
 #include <signal.h>         /* sigaction */
 #include <time.h>           /* time, clock_gettime, strftime, gmtime */
 #include <sys/time.h>       /* timeval */
@@ -65,6 +66,7 @@ extern "C" {
 #endif
     extern void* hub_init_and_setup(void);  /* Initialize and setup the PapaDuck hub */
     extern void hub_run_loop(void);         /* Run the hub's main processing loop */
+    extern int hub_send_data(uint8_t topic, const char* message, int length, const uint8_t* targetDevice);  /* Send data to MamaDucks */
 #ifdef __cplusplus
 }
 #endif
@@ -186,7 +188,8 @@ static char mqtt_client_id[64] = "papa-duck-gateway-1"; /* MQTT client ID */
 static char mqtt_username[64] = ""; /* MQTT username */
 static char mqtt_password[64] = ""; /* MQTT password */
 static char mqtt_pub_topic[128] = "hub/event"; /* MQTT publish topic */
-static char mqtt_sub_topic[128] = "incoming/say_hello"; /* MQTT subscribe topic */
+static char mqtt_sub_topic[128] = "hub/command"; /* MQTT subscribe topic for incoming commands */
+static char mqtt_response_topic[128] = "hub/response"; /* MQTT topic for command responses and status */
 static int mqtt_keepalive = 60; /* MQTT keepalive interval */
 static bool mqtt_use_tls = false; /* Use TLS for MQTT */
 static char mqtt_ca_cert_file[256] = ""; /* CA certificate file path */
@@ -353,6 +356,118 @@ static int get_tx_gain_lut_index(uint8_t rf_chain, int8_t rf_power, uint8_t * lu
 /* MQTT function declarations */
 static int mqtt_queue_message(const char* topic, const char* message, int length);
 static int mqtt_publish_queued_messages(void);
+static void mqtt_publish_response(const char* message, int length);
+
+/* MQTT Message Arrival Callback - handles incoming commands */
+int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
+    (void)context;
+    (void)topicLen;
+    
+    MSG("[MQTT] Received command on topic: %s\n", topicName);
+    MSG("[MQTT] Message length: %d bytes\n", message->payloadlen);
+    
+    if (message->payloadlen > 0 && message->payload != NULL) {
+        // Parse JSON command format: {"target":"MAMADUCK","topic":20,"message":"LED_ON"}
+        // For simplicity, we'll use parson library which is already included
+        
+        char *payload_str = malloc(message->payloadlen + 1);
+        if (payload_str == NULL) {
+            MSG("ERROR: [MQTT] Failed to allocate memory for payload\n");
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        
+        memcpy(payload_str, message->payload, message->payloadlen);
+        payload_str[message->payloadlen] = '\0';
+        
+        MSG("[MQTT] Command payload: %s\n", payload_str);
+        
+        // Parse JSON
+        JSON_Value *root_value = json_parse_string(payload_str);
+        if (root_value == NULL) {
+            MSG("WARNING: [MQTT] Failed to parse JSON command\n");
+            free(payload_str);
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        
+        JSON_Object *root_obj = json_value_get_object(root_value);
+        
+        // Extract command parameters
+        const char *target_str = json_object_get_string(root_obj, "target");
+        double topic_num = json_object_get_number(root_obj, "topic");
+        const char *cmd_message = json_object_get_string(root_obj, "message");
+        
+        if (target_str == NULL || topic_num < 20 || cmd_message == NULL) {
+            MSG("WARNING: [MQTT] Invalid command format. Required: {\"target\":\"BROADCAST|DEVICEID\",\"topic\":20-255,\"message\":\"text\"}\n");
+            json_value_free(root_value);
+            free(payload_str);
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        
+        // Parse target device ID
+        uint8_t target_device[8];
+        if (strcasecmp(target_str, "BROADCAST") == 0 || strcasecmp(target_str, "ALL") == 0) {
+            // Broadcast to all MamaDucks
+            memset(target_device, 0xFF, 8);
+            MSG("[MQTT] Target: BROADCAST\n");
+        } else {
+            // Specific device ID (pad with spaces if shorter than 8 chars)
+            memset(target_device, 0x20, 8); // Fill with spaces
+            size_t len = strlen(target_str);
+            if (len > 8) len = 8;
+            memcpy(target_device, target_str, len);
+            MSG("[MQTT] Target device: %.8s\n", target_device);
+        }
+        
+        // Send command to MamaDucks
+        uint8_t topic = (uint8_t)topic_num;
+        int cmd_len = strlen(cmd_message);
+        
+        MSG("[MQTT] Sending command: topic=%d, message='%s', length=%d\n", topic, cmd_message, cmd_len);
+        
+        int result = hub_send_data(topic, cmd_message, cmd_len, target_device);
+        
+        // Send acknowledgment response
+        char response[512];
+        int response_len;
+        if (result == 0) {
+            MSG("[MQTT] Command forwarded to ClusterDuck network successfully\n");
+            response_len = snprintf(response, sizeof(response),
+                "{\"status\":\"success\",\"target\":\"%.8s\",\"topic\":%d,\"message\":\"%s\"}",
+                target_device, topic, cmd_message);
+        } else {
+            MSG("ERROR: [MQTT] Failed to forward command to ClusterDuck network: %d\n", result);
+            response_len = snprintf(response, sizeof(response),
+                "{\"status\":\"error\",\"code\":%d,\"target\":\"%.8s\",\"topic\":%d,\"message\":\"%s\"}",
+                result, target_device, topic, cmd_message);
+        }
+        
+        // Publish acknowledgment to response topic
+        if (response_len > 0 && response_len < (int)sizeof(response)) {
+            mqtt_publish_response(response, response_len);
+        }
+        
+        // Cleanup
+        json_value_free(root_value);
+        free(payload_str);
+    }
+    
+    MQTTClient_freeMessage(&message);
+    MQTTClient_free(topicName);
+    return 1;
+}
+
+/* MQTT Connection Lost Callback */
+void mqtt_connection_lost(void *context, char *cause) {
+    (void)context;
+    MSG("WARNING: [MQTT] Connection lost: %s\n", cause ? cause : "unknown reason");
+    // The health check in thread_duck will handle reconnection
+}
 
 /* threads */
 void thread_up(void);
@@ -391,6 +506,10 @@ int mqtt_init_and_connect(void) {
         mqtt_reconnect_attempts++;
         return -1;
     }
+    
+    // Set up callbacks for incoming messages and connection loss
+    MQTTClient_setCallbacks(mqtt_client, NULL, mqtt_connection_lost, mqtt_message_arrived, NULL);
+    MSG("[MQTT] Callbacks registered for incoming messages\n");
     
     // Set up connection options
     MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -634,6 +753,11 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     } else {
         MSG("[MQTT] Message published successfully\n");
     }
+}
+
+/* MQTT Response Publishing function - publishes to response topic */
+void mqtt_publish_response(const char* message, int length) {
+    mqtt_publish_message(mqtt_response_topic, message, length);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1621,20 +1745,34 @@ static int parse_mqtt_configuration(const char * conf_file) {
         MSG("INFO: MQTT password is configured\n");
     }
 
-    /* MQTT publish topic (optional) */
-    str = json_object_get_string(conf_obj, "pub_topic");
-    if (str != NULL) {
-        strncpy(mqtt_pub_topic, str, sizeof mqtt_pub_topic);
-        mqtt_pub_topic[sizeof mqtt_pub_topic - 1] = '\0';
-        MSG("INFO: MQTT publish topic is configured to \"%s\"\n", mqtt_pub_topic);
-    }
-
-    /* MQTT subscribe topic (optional) */
-    str = json_object_get_string(conf_obj, "sub_topic");
-    if (str != NULL) {
-        strncpy(mqtt_sub_topic, str, sizeof mqtt_sub_topic);
-        mqtt_sub_topic[sizeof mqtt_sub_topic - 1] = '\0';
-        MSG("INFO: MQTT subscribe topic is configured to \"%s\"\n", mqtt_sub_topic);
+    /* MQTT topics (using new nested format) */
+    JSON_Object *topics_obj = json_object_get_object(conf_obj, "topics");
+    if (topics_obj != NULL) {
+        /* Publish topic */
+        str = json_object_get_string(topics_obj, "publish");
+        if (str != NULL) {
+            strncpy(mqtt_pub_topic, str, sizeof mqtt_pub_topic);
+            mqtt_pub_topic[sizeof mqtt_pub_topic - 1] = '\0';
+            MSG("INFO: MQTT publish topic is configured to \"%s\"\n", mqtt_pub_topic);
+        }
+        
+        /* Subscribe topic */
+        str = json_object_get_string(topics_obj, "subscribe");
+        if (str != NULL) {
+            strncpy(mqtt_sub_topic, str, sizeof mqtt_sub_topic);
+            mqtt_sub_topic[sizeof mqtt_sub_topic - 1] = '\0';
+            MSG("INFO: MQTT subscribe topic is configured to \"%s\"\n", mqtt_sub_topic);
+        }
+        
+        /* Response topic */
+        str = json_object_get_string(topics_obj, "response");
+        if (str != NULL) {
+            strncpy(mqtt_response_topic, str, sizeof mqtt_response_topic);
+            mqtt_response_topic[sizeof mqtt_response_topic - 1] = '\0';
+            MSG("INFO: MQTT response topic is configured to \"%s\"\n", mqtt_response_topic);
+        }
+    } else {
+        MSG("WARNING: No 'topics' object found in mqtt_conf. Using default topics.\n");
     }
 
     /* MQTT keepalive (optional) */

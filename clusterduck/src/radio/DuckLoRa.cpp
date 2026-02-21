@@ -493,15 +493,22 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
                                uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
                                uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
 {
-    printf("[DUCK_RX_CB] Callback invoked: size=%d rssi=%d snr=%.2f freq=%u\n", 
-           size, rssi, snr, freq_hz);
+    // Log the topic from the CDP packet (topic is at byte 20 per TOPIC_POS)
+    if (size >= TOPIC_POS + 1) {
+        uint8_t topic = payload[TOPIC_POS];
+        printf("[DUCK_RX_CB] RX CDP packet: topic=%d, size=%d, rssi=%d, snr=%.2f, freq=%u\n", 
+               topic, size, rssi, snr, freq_hz);
+    } else {
+        printf("[DUCK_RX_CB] RX data: size=%d (too small for CDP packet), rssi=%d, snr=%.2f\n", 
+               size, rssi, snr);
+    }
     
     // Store the packet in the bridge for readReceivedData() to pick up
     // Use the C++ API to push directly to the polling buffer
     std::vector<uint8_t> packet(payload, payload + size);
     cdp_bridge::push_uplink_packet(packet);
     
-    // CRITICAL: Set the receive flag so hub.main() knows to process packets
+    // CRITICAL: Set the receive flag so hub.processPackets() knows to process packets
     // This mimics the behavior of SX127x/SX1262 interrupt handlers
     DuckLoRa::setReceiveFlag(true);
 }
@@ -509,10 +516,18 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     int err = DUCK_ERR_NONE;
 
-    loginfo_ln("TX data");
-    logdbg_ln(" -> len: %d, %s", length, duckutils::toString(data, length).c_str());
+    // Log the topic from the serialized CDP packet (topic is at byte 20 per TOPIC_POS)
+    if (length >= TOPIC_POS + 1) {
+        uint8_t topic = data[TOPIC_POS];
+        loginfo_ln("TX CDP packet: topic=%d, length=%d", topic, length);
+    } else {
+        loginfo_ln("TX data: length=%d (too small for CDP packet)", length);
+    }
+    logdbg_ln(" -> hex: %s", length, duckutils::toString(data, length).c_str());
 
     // Enqueue downlink for transmission via the gateway
+    // Note: data is already a serialized CdpPacket from prepareForSending()
+    // Packet structure: [SDUID(8)][DDUID(8)][MUID(4)][TOPIC(1)][TYPE(1)][HOP(1)][CRC(4)][DATA...]
     cdp_bridge_enqueue_downlink(data, (int)length);
     return err;
 }
