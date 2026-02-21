@@ -747,9 +747,11 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
         MSG("ERROR: [MQTT] Failed to publish message, return code %d. Queueing message.\n", rc);
         mqtt_queue_message(pub_topic, message, length);
         // Mark client as disconnected so we'll try to reconnect
-        MQTTClient_disconnect(mqtt_client, 100);
-        MQTTClient_destroy(&mqtt_client);
-        mqtt_client = NULL;
+        // Don't try to disconnect - client is already in error state, just destroy it
+        if (mqtt_client != NULL) {
+            MQTTClient_destroy(&mqtt_client);
+            mqtt_client = NULL;
+        }
         pthread_mutex_unlock(&mqtt_reconnect_mutex);
         return;
     }
@@ -760,11 +762,11 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
         MSG("WARNING: [MQTT] Message delivery timeout. Queueing message and reconnecting.\n");
         mqtt_queue_message(pub_topic, message, length);
         // Mark connection as failed and cleanup
-        if (MQTTClient_isConnected(mqtt_client)) {
-            MQTTClient_disconnect(mqtt_client, 100);
+        // After waitForCompletion timeout, client may be in bad state, so just destroy it
+        if (mqtt_client != NULL) {
+            MQTTClient_destroy(&mqtt_client);
+            mqtt_client = NULL;
         }
-        MQTTClient_destroy(&mqtt_client);
-        mqtt_client = NULL;
         pthread_mutex_unlock(&mqtt_reconnect_mutex);
         // Note: reconnection will be handled by health check in thread_duck
     } else {
