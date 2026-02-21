@@ -438,7 +438,9 @@ int mqtt_init_and_connect(void) {
     }
     
     // Publish any queued messages from previous disconnections
+    MSG("[MQTT] Checking for queued messages: count=%d\n", mqtt_queue_count);
     if (mqtt_queue_count > 0) {
+        MSG("[MQTT] Publishing %d queued message(s) after reconnection\n", mqtt_queue_count);
         mqtt_publish_queued_messages();
     }
     
@@ -3225,8 +3227,11 @@ void thread_duck(void) {
                 
                 // Check if connection is still alive
                 if (mqtt_client != NULL && !MQTTClient_isConnected(mqtt_client)) {
-                    MSG("WARNING: [MQTT] Connection lost, attempting reconnection...\n");
-                    mqtt_reconnect_with_backoff();
+                    MSG("WARNING: [MQTT] Connection lost (queue count=%d), attempting reconnection...\n", mqtt_queue_count);
+                    int result = mqtt_reconnect_with_backoff();
+                    if (result == 0) {
+                        MSG("[MQTT] Reconnection successful from health check\n");
+                    }
                 }
             }
         }
