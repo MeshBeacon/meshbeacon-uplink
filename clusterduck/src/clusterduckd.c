@@ -179,6 +179,7 @@ static unsigned stat_interval = DEFAULT_STAT; /* time interval (in sec) at which
 
 /* MQTT library */
 static MQTTClient mqtt_client = NULL;
+static volatile bool mqtt_needs_reconnect = false; /* Flag to indicate client needs reconnection */
 
 /* MQTT configuration variables */
 static bool mqtt_enabled = false; /* MQTT publishing enabled */
@@ -487,6 +488,9 @@ int mqtt_init_and_connect(void) {
     
     // If client already exists, clean it up first
     if (mqtt_client != NULL) {
+        // Mark as needing reconnect to prevent use during cleanup
+        mqtt_needs_reconnect = true;
+        
         // Only disconnect if actually connected
         if (MQTTClient_isConnected(mqtt_client)) {
             MQTTClient_disconnect(mqtt_client, 100);
@@ -599,6 +603,9 @@ int mqtt_reconnect_with_backoff(void) {
         MSG("[MQTT] Reconnection failed. Next attempt in %d seconds.\n", mqtt_reconnect_delay);
     } else {
         MSG("[MQTT] Reconnection successful!\n");
+        
+        // Clear the reconnect flag
+        mqtt_needs_reconnect = false;
         
         // Publish any queued messages
         if (mqtt_queue_count > 0) {
@@ -716,8 +723,8 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     // Lock for thread-safe access to mqtt_client
     pthread_mutex_lock(&mqtt_reconnect_mutex);
     
-    // Check if client is connected
-    if (mqtt_client == NULL || !MQTTClient_isConnected(mqtt_client)) {
+    // Check if client is connected and doesn't need reconnection
+    if (mqtt_client == NULL || mqtt_needs_reconnect || !MQTTClient_isConnected(mqtt_client)) {
         MSG("WARNING: [MQTT] Client disconnected, queueing message\n");
         
         // Queue the message for later
@@ -746,7 +753,8 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     if (rc != MQTTCLIENT_SUCCESS) {
         MSG("ERROR: [MQTT] Failed to publish message, return code %d. Queueing message.\n", rc);
         mqtt_queue_message(pub_topic, message, length);
-        // Don't destroy the client here - just unlock and let health check handle reconnection
+        // Mark client as needing reconnection
+        mqtt_needs_reconnect = true;
         pthread_mutex_unlock(&mqtt_reconnect_mutex);
         return;
     }
@@ -756,10 +764,11 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     if (rc != MQTTCLIENT_SUCCESS) {
         MSG("WARNING: [MQTT] Message delivery timeout. Queueing message and reconnecting.\n");
         mqtt_queue_message(pub_topic, message, length);
-        // Don't destroy the client here - just unlock and let health check handle reconnection
-        // Destroying here can cause race conditions with MQTT library internal threads
+        // Mark client as needing reconnection - don't touch the client object
+        mqtt_needs_reconnect = true;
         pthread_mutex_unlock(&mqtt_reconnect_mutex);
         // Note: reconnection will be handled by health check in thread_duck
+        return;
     } else {
         MSG("[MQTT] Message published successfully\n");
         pthread_mutex_unlock(&mqtt_reconnect_mutex);
