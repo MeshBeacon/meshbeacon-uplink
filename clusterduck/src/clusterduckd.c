@@ -449,9 +449,11 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
                 result, target_device, topic, cmd_message);
         }
         
-        // Publish acknowledgment to response topic
+        // Queue acknowledgment for async publishing (don't publish from within callback)
+        // Publishing from MQTT callback can cause timeouts/deadlocks
         if (response_len > 0 && response_len < (int)sizeof(response)) {
-            mqtt_publish_response(response, response_len);
+            mqtt_queue_message(mqtt_response_topic, response, response_len);
+            MSG("[MQTT] Response queued for async publishing\n");
         }
         
         // Cleanup
@@ -3391,9 +3393,9 @@ void thread_duck(void) {
         if (mqtt_enabled) {
             mqtt_check_counter++;
             
-            // Check more frequently if we have queued messages (every 5 seconds)
+            // Check more frequently if we have queued messages (every 0.5 seconds)
             // Otherwise check every 30 seconds
-            int check_interval = (mqtt_queue_count > 0) ? 50 : 300;  // 50 * 100ms = 5s, 300 * 100ms = 30s
+            int check_interval = (mqtt_queue_count > 0) ? 5 : 300;  // 5 * 100ms = 0.5s, 300 * 100ms = 30s
             
             if (mqtt_check_counter >= check_interval) {
                 mqtt_check_counter = 0;
@@ -3405,6 +3407,10 @@ void thread_duck(void) {
                     if (result == 0) {
                         MSG("[MQTT] Reconnection successful from health check\n");
                     }
+                } else if (mqtt_queue_count > 0 && mqtt_client != NULL && MQTTClient_isConnected(mqtt_client)) {
+                    // Connection is healthy but we have queued messages - publish them
+                    MSG("INFO: [MQTT] Publishing %d queued message(s)...\n", mqtt_queue_count);
+                    mqtt_publish_queued_messages();
                 }
             }
         }
