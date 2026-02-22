@@ -689,10 +689,10 @@ static int mqtt_publish_queued_messages(void) {
             return published;
         }
         
-        // Wait for delivery
-        rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
+        // Wait for delivery (5 second timeout)
+        rc = MQTTClient_waitForCompletion(mqtt_client, token, 5000L);
         if (rc != MQTTCLIENT_SUCCESS) {
-            MSG("WARNING: [MQTT] Queued message delivery timeout\n");
+            MSG("WARNING: [MQTT] Queued message delivery timeout after 5 seconds\n");
         }
         
         // Free message and move to next
@@ -759,10 +759,10 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
         return;
     }
     
-    // Wait for message to be delivered
-    rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
+    // Wait for message to be delivered (5 second timeout)
+    rc = MQTTClient_waitForCompletion(mqtt_client, token, 5000L);
     if (rc != MQTTCLIENT_SUCCESS) {
-        MSG("WARNING: [MQTT] Message delivery timeout. Queueing message and reconnecting.\n");
+        MSG("WARNING: [MQTT] Message delivery timeout after 5 seconds. Queueing message and reconnecting.\n");
         mqtt_queue_message(pub_topic, message, length);
         // Mark client as needing reconnection - don't touch the client object
         mqtt_needs_reconnect = true;
