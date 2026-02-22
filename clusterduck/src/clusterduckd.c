@@ -88,18 +88,6 @@ extern "C" {
 #define CDPCFG_RF_LORA_TXPOW 27
 #define CDPCFG_RF_LORA_GAIN 0
 
-/* AS923 channel list — must match CDPCFG_RADIO_CHANNEL_1..6 in cdpcfg.h */
-static const uint32_t CDP_AS923_CHANNELS[] = {
-    923000000, /* CH1 */
-    923200000, /* CH2 */
-    923400000, /* CH3 */
-    922800000, /* CH4 */
-    922600000, /* CH5 */
-    922400000, /* CH6 */
-};
-#define CDP_AS923_NUM_CHANNELS (sizeof(CDP_AS923_CHANNELS) / sizeof(CDP_AS923_CHANNELS[0]))
-static size_t cdp_tx_channel_idx = 0; /* round-robin TX channel index */
-
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE CONSTANTS ---------------------------------------------------- */
 
