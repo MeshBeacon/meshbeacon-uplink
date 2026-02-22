@@ -493,17 +493,24 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
                                uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
                                uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
 {
-    // Log the topic from the CDP packet (topic is at byte 20 per TOPIC_POS)
+    // Log the topic from the CDP packet (layout: SDUID[0-7] DDUID[8-15] MUID[16-19] TOPIC[20])
     if (size >= TOPIC_POS + 1) {
         uint8_t topic = payload[TOPIC_POS];
-        printf("[DUCK_RX_CB] RX CDP packet: topic=%d, size=%d, rssi=%d, snr=%.2f, freq=%u\n", 
-               topic, size, rssi, snr, freq_hz);
+        // Print SDUID (source)
+        printf("[DUCK_RX_CB] RX CDP packet: topic=%d, size=%d, rssi=%d, snr=%.2f, freq=%u\n",
+                topic, size, rssi, snr, freq_hz);
+        printf("[DUCK_RX_CB]   SDUID(src) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                payload[0],payload[1],payload[2],payload[3],
+                payload[4],payload[5],payload[6],payload[7]);
+        printf("[DUCK_RX_CB]   DDUID(dst) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                payload[8],payload[9],payload[10],payload[11],
+                payload[12],payload[13],payload[14],payload[15]);
+        printf("[DUCK_RX_CB]   MUID       : %02X%02X%02X%02X\n",
+                payload[16],payload[17],payload[18],payload[19]);
     } else {
-        printf("[DUCK_RX_CB] RX data: size=%d (too small for CDP packet), rssi=%d, snr=%.2f\n", 
-               size, rssi, snr);
-    }
-    
-    // Store the packet in the bridge for readReceivedData() to pick up
+        printf("[DUCK_RX_CB] RX data: size=%d (too small for CDP packet), rssi=%d, snr=%.2f\n",
+                size, rssi, snr);
+    }    // Store the packet in the bridge for readReceivedData() to pick up
     // Use the C++ API to push directly to the polling buffer
     std::vector<uint8_t> packet(payload, payload + size);
     cdp_bridge::push_uplink_packet(packet);
@@ -516,14 +523,21 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     int err = DUCK_ERR_NONE;
 
-    // Log the topic from the serialized CDP packet (topic is at byte 20 per TOPIC_POS)
+    // Log the topic from the serialized CDP packet (layout: SDUID[0-7] DDUID[8-15] MUID[16-19] TOPIC[20])
     if (length >= TOPIC_POS + 1) {
         uint8_t topic = data[TOPIC_POS];
-        loginfo_ln("TX CDP packet: topic=%d, length=%d", topic, length);
+        printf("[DUCK_TX_CB] TX CDP packet: topic=%d, length=%d\n", topic, length);
+        printf("[DUCK_TX_CB]   SDUID(src) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                data[0],data[1],data[2],data[3],
+                data[4],data[5],data[6],data[7]);
+        printf("[DUCK_TX_CB]   DDUID(dst) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                data[8],data[9],data[10],data[11],
+                data[12],data[13],data[14],data[15]);
+        printf("[DUCK_TX_CB]   MUID       : %02X%02X%02X%02X\n",
+                data[16],data[17],data[18],data[19]);
     } else {
-        loginfo_ln("TX data: length=%d (too small for CDP packet)", length);
+        printf("[DUCK_TX_CB] TX data: length=%d (too small for CDP packet)\n", length);
     }
-    logdbg_ln(" -> hex: %s", length, duckutils::toString(data, length).c_str());
 
     // Enqueue downlink for transmission via the gateway
     // Note: data is already a serialized CdpPacket from prepareForSending()
