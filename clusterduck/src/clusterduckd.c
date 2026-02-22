@@ -666,49 +666,67 @@ static int mqtt_queue_message(const char* topic, const char* message, int length
 static int mqtt_publish_queued_messages(void) {
     int published = 0;
     
-    pthread_mutex_lock(&mqtt_queue_mutex);
-    
     MSG("[MQTT] Publishing %d queued message(s)\n", mqtt_queue_count);
     
-    while (mqtt_queue_count > 0) {
-        // Get message from tail
+    while (1) {
+        /* Lock only long enough to dequeue one message */
+        pthread_mutex_lock(&mqtt_queue_mutex);
+        if (mqtt_queue_count == 0) {
+            pthread_mutex_unlock(&mqtt_queue_mutex);
+            break;
+        }
+
+        /* Copy message out of queue */
         mqtt_queued_message_t* msg = &mqtt_message_queue[mqtt_queue_tail];
-        
-        // Publish message directly without queueing again
+        char* topic_copy = strdup(msg->topic);
+        char* payload_copy = (char*)malloc(msg->length);
+        int length_copy = msg->length;
+        if (payload_copy) {
+            memcpy(payload_copy, msg->message, msg->length);
+        }
+
+        /* Free original and advance queue */
+        free(msg->message);
+        msg->message = NULL;
+        mqtt_queue_tail = (mqtt_queue_tail + 1) % MQTT_QUEUE_SIZE;
+        mqtt_queue_count--;
+        pthread_mutex_unlock(&mqtt_queue_mutex);
+
+        if (!payload_copy || !topic_copy) {
+            free(topic_copy);
+            free(payload_copy);
+            continue;
+        }
+
+        /* Publish without holding the queue mutex */
         MQTTClient_message pubmsg = MQTTClient_message_initializer;
-        pubmsg.payload = msg->message;
-        pubmsg.payloadlen = msg->length;
+        pubmsg.payload = payload_copy;
+        pubmsg.payloadlen = length_copy;
         pubmsg.qos = 1;
         pubmsg.retained = 0;
-        
+
         MQTTClient_deliveryToken token;
-        int rc = MQTTClient_publishMessage(mqtt_client, msg->topic, &pubmsg, &token);
-        
+        int rc = MQTTClient_publishMessage(mqtt_client, topic_copy, &pubmsg, &token);
+
         if (rc != MQTTCLIENT_SUCCESS) {
             MSG("ERROR: [MQTT] Failed to publish queued message, return code %d\n", rc);
-            // Stop processing queue on error
-            pthread_mutex_unlock(&mqtt_queue_mutex);
+            free(topic_copy);
+            free(payload_copy);
             return published;
         }
-        
-        // Wait for delivery (5 second timeout)
+
+        /* Wait for delivery with timeout - mutex is NOT held here */
         rc = MQTTClient_waitForCompletion(mqtt_client, token, 5000L);
         if (rc != MQTTCLIENT_SUCCESS) {
             MSG("WARNING: [MQTT] Queued message delivery timeout after 5 seconds\n");
         }
-        
-        // Free message and move to next
-        free(msg->message);
-        msg->message = NULL;
-        
-        mqtt_queue_tail = (mqtt_queue_tail + 1) % MQTT_QUEUE_SIZE;
-        mqtt_queue_count--;
+
+        free(topic_copy);
+        free(payload_copy);
         published++;
     }
     
     MSG("[MQTT] Successfully published %d queued message(s)\n", published);
-    
-    pthread_mutex_unlock(&mqtt_queue_mutex);
     return published;
 }
 
