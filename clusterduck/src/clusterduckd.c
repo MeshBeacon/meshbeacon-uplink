@@ -2925,7 +2925,7 @@ void thread_down(void) {
                 pthread_mutex_unlock(&mx_concent);
                 
                 /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
-                txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
+                txpkt.count_us = current_concentrator_time + 2000000;  /* 2 seconds in the future */
                 txpkt.tx_mode = IMMEDIATE;
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
                 
