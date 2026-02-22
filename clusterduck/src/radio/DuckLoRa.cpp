@@ -486,6 +486,9 @@ void DuckLoRa::onInterrupt(void) {
     // Interrupt handling not needed in gateway mode (SX1302 HAL)
 }
 
+/* Last RX frequency - reply on same channel the uplink arrived on */
+static uint32_t last_rx_freq_hz = CDPCFG_RF_LORA_FREQ_HZ;
+
 // Callback invoked when packet_forwarder receives packets via the bridge
 // This function needs extern linkage (non-static) to match the friend declaration in DuckLoRa.h
 void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
@@ -512,6 +515,9 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
                 size, rssi, snr);
     }    // Store the packet in the bridge for readReceivedData() to pick up
     // Use the C++ API to push directly to the polling buffer
+    /* Store RX frequency so TX reply goes on same channel */
+    last_rx_freq_hz = freq_hz;
+    printf("[DUCK_RX_CB] Stored last_rx_freq_hz=%u Hz for TX reply\n", last_rx_freq_hz);
     std::vector<uint8_t> packet(payload, payload + size);
     cdp_bridge::push_uplink_packet(packet);
     
@@ -542,6 +548,16 @@ int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     // Enqueue downlink for transmission via the gateway
     // Note: data is already a serialized CdpPacket from prepareForSending()
     // Packet structure: [SDUID(8)][DDUID(8)][MUID(4)][TOPIC(1)][TYPE(1)][HOP(1)][CRC(4)][DATA...]
-    cdp_bridge_enqueue_downlink(data, (int)length);
+    /* Reply on the same frequency the RREQ arrived on */
+    printf("[DUCK_TX_CB] Enqueuing downlink on freq=%u Hz\n", last_rx_freq_hz);
+    cdp_bridge_enqueue_downlink_ext(data, (int)length,
+        last_rx_freq_hz, /* reply on same RX channel */
+        0,               /* tmst unused for IMMEDIATE */
+        CDPCFG_RF_LORA_TXPOW,
+        125000,          /* bw_hz: 125 kHz */
+        7,               /* sf: SF7 */
+        1,               /* cr: 4/5 */
+        0                /* rf_chain */
+    );
     return err;
 }

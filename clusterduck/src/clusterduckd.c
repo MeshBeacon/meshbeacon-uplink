@@ -2992,13 +2992,10 @@ void thread_down(void) {
                 memset(&txpkt, 0, sizeof(txpkt));
                 memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
                 txpkt.size = buf_capacity;
-                /* Reply using round-robin channel hopping to match MamaDuck's scan pattern.
-                 * MamaDuck cycles CH1..CH6 while SEARCHING, so we rotate our TX channel
-                 * to ensure it lands on whichever channel MamaDuck is currently listening. */
-                txpkt.freq_hz = CDP_AS923_CHANNELS[cdp_tx_channel_idx];
-                cdp_tx_channel_idx = (cdp_tx_channel_idx + 1) % CDP_AS923_NUM_CHANNELS;
-                MSG("INFO: ClusterDuck downlink TX freq=%u Hz (channel %zu)\n",
-                    txpkt.freq_hz, cdp_tx_channel_idx);
+                /* Reply on the same frequency the RREQ was received on.
+                 * last_rx_freq_hz is stored in DuckLoRa.cpp and passed via enqueue_downlink_ext. */
+                txpkt.freq_hz = (dl_freq_hz > 0) ? dl_freq_hz : CDPCFG_RF_LORA_FREQ_HZ;
+                MSG("INFO: ClusterDuck downlink TX freq=%u Hz\n", txpkt.freq_hz);
                 
                 /* Always get fresh timestamp - ClusterDuck packets are always IMMEDIATE */
                 pthread_mutex_lock(&mx_concent);
