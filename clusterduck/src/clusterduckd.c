@@ -2923,8 +2923,8 @@ void thread_down(void) {
                 txpkt.rf_chain = 0;
                 txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
                 txpkt.modulation = MOD_LORA;
-                txpkt.bandwidth = CDPCFG_RF_LORA_BW;
-                txpkt.datarate = CDPCFG_RF_LORA_SF;
+                txpkt.bandwidth = BW_125KHZ;
+                txpkt.datarate = DR_LORA_SF7;
                 txpkt.coderate = CR_LORA_4_5;
                 txpkt.invert_pol = true;
                 txpkt.preamble = 8;
