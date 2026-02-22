@@ -2931,6 +2931,9 @@ void thread_down(void) {
                 txpkt.no_crc = false;
                 txpkt.no_header = false;
                 
+                MSG("DEBUG: bandwidth=%u (BW_125KHZ=%u), datarate=%u, coderate=%u\n", 
+                    txpkt.bandwidth, BW_125KHZ, txpkt.datarate, txpkt.coderate);
+                
                 /* Get current timestamp */
                 pthread_mutex_lock(&mx_concent);
                 lgw_get_instcnt(&current_concentrator_time);
