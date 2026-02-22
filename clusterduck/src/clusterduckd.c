@@ -2259,6 +2259,7 @@ int main(int argc, char ** argv)
             cp_gps_coord = reference_coord;
         }
 
+	/*
         pthread_mutex_lock(&mx_concent);
         i = lgw_get_temperature(&temperature);
         pthread_mutex_unlock(&mx_concent);
@@ -2267,8 +2268,10 @@ int main(int argc, char ** argv)
         } else {
             printf("### Concentrator temperature: %.0f C ###\n", temperature);
         }
+	*/
 
         /* generate a JSON report (will be sent to server by upstream thread) */
+	/*
         pthread_mutex_lock(&mx_stat_rep);
         if (((gps_enabled == true) && (coord_ok == true)) || (gps_fake_enable == true)) {
             snprintf(status_report, STATUS_SIZE, "\"stat\":{\"time\":\"%s\",\"lati\":%.5f,\"long\":%.5f,\"alti\":%i,\"rxnb\":%u,\"rxok\":%u,\"rxfw\":%u,\"dwnb\":%u,\"txnb\":%u,\"temp\":%.1f}", stat_timestamp, cp_gps_coord.lat, cp_gps_coord.lon, cp_gps_coord.alt, cp_nb_rx_rcv, cp_nb_rx_ok, cp_up_pkt_fwd, cp_dw_dgram_rcv, cp_nb_tx_ok, temperature);
@@ -2277,6 +2280,7 @@ int main(int argc, char ** argv)
         }
         report_ready = true;
         pthread_mutex_unlock(&mx_stat_rep);
+	*/
     }
 
     /* wait for all threads with a COM with the concentrator board to finish (1 fetch cycle max) */
