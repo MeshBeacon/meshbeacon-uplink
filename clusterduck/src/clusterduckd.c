@@ -2701,6 +2701,10 @@ void thread_down(void) {
                                                    &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
                                                    &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
+        if (duck_rc != 1) {
+            MSG("DEBUG: [thread_down] cdp_bridge_pop_downlink returned %d, buf_capacity=%u\n", duck_rc, buf_capacity);
+        }
+
         if (duck_rc == 0 && buf_capacity > 0) {
 
             MSG("INFO: ClusterDuck downlink received, size=%u\n", buf_capacity);
