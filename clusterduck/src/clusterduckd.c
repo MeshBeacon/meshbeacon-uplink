@@ -2718,19 +2718,14 @@ void thread_down(void) {
                     /* Frequency and timestamp (fallback to CDP defaults if not provided) */
                     txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
                     
-                    /* Get current timestamp to validate dl_tmst */
+                    /* Always get fresh timestamp - ClusterDuck packets are always IMMEDIATE */
                     pthread_mutex_lock(&mx_concent);
                     lgw_get_instcnt(&current_concentrator_time);
                     pthread_mutex_unlock(&mx_concent);
                     
-                    /* Set timestamp: if provided and in future, use it; otherwise use immediate (current + 1ms) */
-                    if (dl_tmst != 0 && dl_tmst > current_concentrator_time) {
-                        txpkt.count_us = dl_tmst;
-                        txpkt.tx_mode = TIMESTAMPED;
-                    } else {
-                        txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
-                        txpkt.tx_mode = IMMEDIATE;
-                    }
+                    /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
+                    txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
+                    txpkt.tx_mode = IMMEDIATE;
 
                     /* RF chain and power */
                     txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
@@ -2924,19 +2919,14 @@ void thread_down(void) {
                 txpkt.size = buf_capacity;
                 txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
                 
-                /* Get current timestamp first */
+                /* Always get fresh timestamp - ClusterDuck packets are always IMMEDIATE */
                 pthread_mutex_lock(&mx_concent);
                 lgw_get_instcnt(&current_concentrator_time);
                 pthread_mutex_unlock(&mx_concent);
                 
-                /* Set timestamp: if provided and in future, use it; otherwise use immediate (current + 1ms) */
-                if (dl_tmst != 0 && dl_tmst > current_concentrator_time) {
-                    txpkt.count_us = dl_tmst;
-                    txpkt.tx_mode = TIMESTAMPED;
-                } else {
-                    txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
-                    txpkt.tx_mode = IMMEDIATE;
-                }
+                /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
+                txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
+                txpkt.tx_mode = IMMEDIATE;
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
                 
                 /* Configure radio parameters */
