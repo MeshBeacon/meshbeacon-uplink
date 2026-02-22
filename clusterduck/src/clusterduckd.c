@@ -2728,7 +2728,7 @@ void thread_down(void) {
                         txpkt.count_us = dl_tmst;
                         txpkt.tx_mode = TIMESTAMPED;
                     } else {
-                        txpkt.count_us = current_concentrator_time + 1000;  /* 1ms in the future */
+                        txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
                         txpkt.tx_mode = IMMEDIATE;
                     }
 
@@ -2934,7 +2934,7 @@ void thread_down(void) {
                     txpkt.count_us = dl_tmst;
                     txpkt.tx_mode = TIMESTAMPED;
                 } else {
-                    txpkt.count_us = current_concentrator_time + 1000;  /* 1ms in the future */
+                    txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
                     txpkt.tx_mode = IMMEDIATE;
                 }
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
