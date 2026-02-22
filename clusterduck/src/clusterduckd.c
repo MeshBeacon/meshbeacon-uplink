@@ -2967,6 +2967,14 @@ void thread_down(void) {
             
             if (duck_rc_inner == 0 && buf_capacity > 0) {
                 MSG("INFO: ClusterDuck downlink received (inner loop), size=%u\n", buf_capacity);
+
+                /* Wait for MamaDuck SX1262 to return to RX mode after its RREQ TX.
+                 * MamaDuck finishes TX, then its radio needs ~5-10ms turnaround.
+                 * Gateway processes RREQ and queues RREP very fast, so we delay
+                 * here to ensure MamaDuck is listening before we transmit. */
+                struct timespec dl_delay = {0, 500000000L}; /* 500ms */
+                nanosleep(&dl_delay, NULL);
+                MSG("INFO: ClusterDuck downlink delay done, transmitting now\n");
                 
                 /* Build and enqueue packet - same code as outer loop */
                 memset(&txpkt, 0, sizeof(txpkt));
