@@ -2724,7 +2724,7 @@ void thread_down(void) {
                     pthread_mutex_unlock(&mx_concent);
                     
                 /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
-                txpkt.count_us = current_concentrator_time + 5000000;  /* 5 seconds in the future */
+                txpkt.count_us = current_concentrator_time + 10000000;  /* 10 seconds in the future */
                 txpkt.tx_mode = TIMESTAMPED;  /* Use TIMESTAMPED, not IMMEDIATE */
 
                 /* RF chain and power */
@@ -2923,7 +2923,7 @@ void thread_down(void) {
                 pthread_mutex_unlock(&mx_concent);
                 
                 /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
-                txpkt.count_us = current_concentrator_time + 5000000;  /* 5 seconds in the future */
+                txpkt.count_us = current_concentrator_time + 10000000;  /* 10 seconds in the future */
                 txpkt.tx_mode = TIMESTAMPED;  /* Use TIMESTAMPED, not IMMEDIATE */
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_A;  /* Use CLASS_A to preserve our timestamp */
                 
