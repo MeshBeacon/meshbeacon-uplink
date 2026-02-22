@@ -2717,10 +2717,20 @@ void thread_down(void) {
 
                     /* Frequency and timestamp (fallback to CDP defaults if not provided) */
                     txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
-                    txpkt.count_us = dl_tmst;
-
-                    /* Choose tx_mode */
-                    txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
+                    
+                    /* Get current timestamp to validate dl_tmst */
+                    pthread_mutex_lock(&mx_concent);
+                    lgw_get_instcnt(&current_concentrator_time);
+                    pthread_mutex_unlock(&mx_concent);
+                    
+                    /* Set timestamp: if provided and in future, use it; otherwise use immediate (current + 1ms) */
+                    if (dl_tmst != 0 && dl_tmst > current_concentrator_time) {
+                        txpkt.count_us = dl_tmst;
+                        txpkt.tx_mode = TIMESTAMPED;
+                    } else {
+                        txpkt.count_us = current_concentrator_time + 1000;  /* 1ms in the future */
+                        txpkt.tx_mode = IMMEDIATE;
+                    }
 
                     /* RF chain and power */
                     txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
@@ -2761,9 +2771,7 @@ void thread_down(void) {
 
                 /* insert packet to be sent into JIT queue */
                 if (jit_result == JIT_ERROR_OK) {
-                    pthread_mutex_lock(&mx_concent);
-                    lgw_get_instcnt(&current_concentrator_time);
-                    pthread_mutex_unlock(&mx_concent);
+                    /* current_concentrator_time already obtained above */
                     jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
                     if (jit_result != JIT_ERROR_OK) {
                         printf("ERROR: Packet REJECTED (jit error=%d)\n", jit_result);
@@ -2915,8 +2923,20 @@ void thread_down(void) {
                 memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
                 txpkt.size = buf_capacity;
                 txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
-                txpkt.count_us = dl_tmst;
-                txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
+                
+                /* Get current timestamp first */
+                pthread_mutex_lock(&mx_concent);
+                lgw_get_instcnt(&current_concentrator_time);
+                pthread_mutex_unlock(&mx_concent);
+                
+                /* Set timestamp: if provided and in future, use it; otherwise use immediate (current + 1ms) */
+                if (dl_tmst != 0 && dl_tmst > current_concentrator_time) {
+                    txpkt.count_us = dl_tmst;
+                    txpkt.tx_mode = TIMESTAMPED;
+                } else {
+                    txpkt.count_us = current_concentrator_time + 1000;  /* 1ms in the future */
+                    txpkt.tx_mode = IMMEDIATE;
+                }
                 downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
                 
                 /* Configure radio parameters */
@@ -2931,13 +2951,9 @@ void thread_down(void) {
                 txpkt.no_crc = false;
                 txpkt.no_header = false;
                 
-                MSG("DEBUG: bandwidth=%u (BW_125KHZ=%u), datarate=%u, coderate=%u\n", 
-                    txpkt.bandwidth, BW_125KHZ, txpkt.datarate, txpkt.coderate);
-                
-                /* Get current timestamp */
-                pthread_mutex_lock(&mx_concent);
-                lgw_get_instcnt(&current_concentrator_time);
-                pthread_mutex_unlock(&mx_concent);
+                MSG("DEBUG: bandwidth=%u (BW_125KHZ=%u), datarate=%u, coderate=%u, tx_mode=%s, count_us=%u\n", 
+                    txpkt.bandwidth, BW_125KHZ, txpkt.datarate, txpkt.coderate,
+                    (txpkt.tx_mode == IMMEDIATE) ? "IMMEDIATE" : "TIMESTAMPED", txpkt.count_us);
                 
                 jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
                 if (jit_result == JIT_ERROR_OK) {
