@@ -2723,24 +2723,22 @@ void thread_down(void) {
                     lgw_get_instcnt(&current_concentrator_time);
                     pthread_mutex_unlock(&mx_concent);
                     
-                    /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
-                    txpkt.count_us = current_concentrator_time + 100000;  /* 100ms in the future */
-                    txpkt.tx_mode = IMMEDIATE;
+                /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
+                txpkt.count_us = current_concentrator_time + 2000000;  /* 2 seconds in the future */
+                txpkt.tx_mode = TIMESTAMPED;  /* Use TIMESTAMPED, not IMMEDIATE */
 
-                    /* RF chain and power */
-                    txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
-                    txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
+                /* RF chain and power */
+                txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
+                txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
 
-                    /* Modulation params — LoRa defaults mapped from CDP config if not provided */
-                    txpkt.modulation = MOD_LORA;
-                    txpkt.bandwidth  = BW_125KHZ;
-                    txpkt.datarate   = DR_LORA_SF7;
-                    txpkt.coderate   = CR_LORA_4_5;
+                /* Modulation params — LoRa defaults mapped from CDP config if not provided */
+                txpkt.modulation = MOD_LORA;
+                txpkt.bandwidth  = BW_125KHZ;
+                txpkt.datarate   = DR_LORA_SF7;
+                txpkt.coderate   = CR_LORA_4_5;
 
 	        MSG("INFO: txpkt size is %u\n", txpkt.size);
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
-
-                /* End of Zaihan's code */
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_A;  /* Use CLASS_A to preserve our timestamp */                /* End of Zaihan's code */
 
                 /* reset error/warning results */
                 jit_result = warning_result = JIT_ERROR_OK;
@@ -2926,8 +2924,8 @@ void thread_down(void) {
                 
                 /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
                 txpkt.count_us = current_concentrator_time + 2000000;  /* 2 seconds in the future */
-                txpkt.tx_mode = IMMEDIATE;
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
+                txpkt.tx_mode = TIMESTAMPED;  /* Use TIMESTAMPED, not IMMEDIATE */
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_A;  /* Use CLASS_A to preserve our timestamp */
                 
                 /* Configure radio parameters */
                 txpkt.rf_chain = 0;
