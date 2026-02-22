@@ -3015,7 +3015,7 @@ void thread_down(void) {
                 txpkt.bandwidth = BW_125KHZ;
                 txpkt.datarate = DR_LORA_SF7;
                 txpkt.coderate = CR_LORA_4_5;
-                txpkt.invert_pol = true;
+                txpkt.invert_pol = false; /* CDP is not LoRaWAN — MamaDuck uses normal (non-inverted) IQ */
                 txpkt.preamble = 8;
                 txpkt.no_crc = false;
                 txpkt.no_header = false;
