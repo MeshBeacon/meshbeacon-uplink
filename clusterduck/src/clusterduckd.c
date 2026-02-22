@@ -2902,6 +2902,53 @@ void thread_down(void) {
                 }
             }
 
+            /* Check for ClusterDuck downlinks inside inner loop for faster response */
+            int duck_rc_inner = cdp_bridge_pop_downlink(duck_payload_buf, &buf_capacity,
+                                                         &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
+                                                         &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
+            
+            if (duck_rc_inner == 0 && buf_capacity > 0) {
+                MSG("INFO: ClusterDuck downlink received (inner loop), size=%u\n", buf_capacity);
+                
+                /* Build and enqueue packet - same code as outer loop */
+                memset(&txpkt, 0, sizeof(txpkt));
+                memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
+                txpkt.size = buf_capacity;
+                txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
+                txpkt.count_us = dl_tmst;
+                txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
+                
+                /* Configure radio parameters */
+                txpkt.rf_chain = 0;
+                txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
+                txpkt.modulation = MOD_LORA;
+                txpkt.bandwidth = CDPCFG_RF_LORA_BW;
+                txpkt.datarate = CDPCFG_RF_LORA_SF;
+                txpkt.coderate = CR_LORA_4_5;
+                txpkt.invert_pol = true;
+                txpkt.preamble = 8;
+                txpkt.no_crc = false;
+                txpkt.no_header = false;
+                
+                /* Get current timestamp */
+                pthread_mutex_lock(&mx_concent);
+                lgw_get_instcnt(&current_concentrator_time);
+                pthread_mutex_unlock(&mx_concent);
+                
+                jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
+                if (jit_result == JIT_ERROR_OK) {
+                    MSG("INFO: ClusterDuck packet enqueued to JIT queue\n");
+                    pthread_mutex_lock(&mx_meas_dw);
+                    meas_nb_tx_requested += 1;
+                    pthread_mutex_unlock(&mx_meas_dw);
+                } else {
+                    MSG("ERROR: ClusterDuck packet rejected by JIT queue: %d\n", jit_result);
+                }
+                
+                /* Reset buffer capacity */
+                buf_capacity = sizeof(duck_payload_buf);
+            }
 
         }
     }
