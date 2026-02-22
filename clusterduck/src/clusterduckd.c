@@ -2718,14 +2718,10 @@ void thread_down(void) {
                     /* Frequency and timestamp (fallback to CDP defaults if not provided) */
                     txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
                     
-                    /* Always get fresh timestamp - ClusterDuck packets are always IMMEDIATE */
-                    pthread_mutex_lock(&mx_concent);
-                    lgw_get_instcnt(&current_concentrator_time);
-                    pthread_mutex_unlock(&mx_concent);
-                    
-                /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
-                txpkt.count_us = current_concentrator_time + 10000000;  /* 10 seconds in the future */
-                txpkt.tx_mode = TIMESTAMPED;  /* Use TIMESTAMPED, not IMMEDIATE */
+                    /* For ClusterDuck packets, use immediate transmission */
+                    /* Let JIT queue handle collision avoidance automatically */
+                    txpkt.count_us = 0;  /* 0 means ASAP - JIT will schedule avoiding collisions */
+                    txpkt.tx_mode = IMMEDIATE;  /* Use IMMEDIATE mode - JIT will find next available slot */
 
                 /* RF chain and power */
                 txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
@@ -2738,7 +2734,7 @@ void thread_down(void) {
                 txpkt.coderate   = CR_LORA_4_5;
 
 	        MSG("INFO: txpkt size is %u\n", txpkt.size);
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_A;  /* Use CLASS_A to preserve our timestamp */                /* End of Zaihan's code */
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;  /* CLASS_C calculates ASAP timing */                /* End of Zaihan's code */
 
                 /* reset error/warning results */
                 jit_result = warning_result = JIT_ERROR_OK;
@@ -2922,10 +2918,11 @@ void thread_down(void) {
                 lgw_get_instcnt(&current_concentrator_time);
                 pthread_mutex_unlock(&mx_concent);
                 
-                /* For ClusterDuck packets, always use immediate transmission with sufficient buffer */
-                txpkt.count_us = current_concentrator_time + 10000000;  /* 10 seconds in the future */
-                txpkt.tx_mode = TIMESTAMPED;  /* Use TIMESTAMPED, not IMMEDIATE */
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_A;  /* Use CLASS_A to preserve our timestamp */
+                /* For ClusterDuck packets, use immediate transmission */
+                /* Let JIT queue handle collision avoidance automatically */
+                txpkt.count_us = 0;  /* 0 means ASAP - JIT will schedule avoiding collisions */
+                txpkt.tx_mode = IMMEDIATE;  /* Use IMMEDIATE mode - JIT will find next available slot */
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;  /* CLASS_C calculates ASAP timing */
                 
                 /* Configure radio parameters */
                 txpkt.rf_chain = 0;
