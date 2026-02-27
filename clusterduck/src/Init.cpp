@@ -137,3 +137,40 @@ extern "C" void hub_run_loop(void) {
     // main() has network joining logic which PapaDucks don't need
     hub.processPackets();
 }
+
+// C wrapper to send data/commands from PapaDuck to MamaDucks
+// topic: 0-19 are reserved, use 20+ for custom application messages
+// targetDevice: Device ID as 8-byte array (use all 0xFF for broadcast)
+// Returns 0 on success, error code otherwise
+extern "C" int hub_send_data(uint8_t topic, const char* message, int length, const uint8_t* targetDevice) {
+    if (message == NULL || length <= 0 || length > 256) {
+        printf("[HUB] ERROR: Invalid message parameters\n");
+        return -1;
+    }
+    
+    // Convert target device to Duid (std::array)
+    std::array<uint8_t, 8> target;
+    if (targetDevice != NULL) {
+        std::copy(targetDevice, targetDevice + 8, target.begin());
+    } else {
+        // Default to broadcast
+        target.fill(0xFF);
+    }
+    
+    printf("[HUB] Sending message: topic=%d, length=%d, target=", topic, length);
+    for (int i = 0; i < 8; i++) {
+        printf("%02X", target[i]);
+    }
+    printf("\n");
+    
+    // Send data using the hub's sendData method
+    int err = hub.sendData(topic, (const uint8_t*)message, length, target);
+    
+    if (err != DUCK_ERR_NONE) {
+        printf("[HUB] ERROR: Failed to send data, err=%d\n", err);
+        return err;
+    }
+    
+    printf("[HUB] Message sent successfully\n");
+    return 0;
+}

@@ -113,7 +113,14 @@ class Duck {
         CdpPacket txPacket = CdpPacket(targetDevice, topic, app_data, this->duid, this->getType());
 
         std::optional<Duid> nextHop = router.getBestNextHop(txPacket.dduid);
-        if(nextHop.has_value() || txPacket.dduid == PAPADUCK_DUID || txPacket.dduid == BROADCAST_DUID){
+        // For PapaDuck (hub), always try to send - neighbors are directly reachable
+        // For other ducks, only send if we have a route or it's a special address
+        bool should_send = (this->getType() == DuckType::PAPA) ||  // PapaDuck always sends
+                          nextHop.has_value() ||                   // Have a route
+                          txPacket.dduid == PAPADUCK_DUID ||       // Target is PapaDuck
+                          txPacket.dduid == BROADCAST_DUID;        // Broadcast
+        
+        if(should_send){
           router.getFilter().assignUniqueMessageId(txPacket);
           err = sendToRadio(txPacket);
         } else {
