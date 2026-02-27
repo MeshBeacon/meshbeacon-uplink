@@ -486,6 +486,9 @@ void DuckLoRa::onInterrupt(void) {
     // Interrupt handling not needed in gateway mode (SX1302 HAL)
 }
 
+/* Last RX frequency - reply on same channel the uplink arrived on */
+static uint32_t last_rx_freq_hz = CDPCFG_RF_LORA_FREQ_HZ;
+
 // Callback invoked when packet_forwarder receives packets via the bridge
 // This function needs extern linkage (non-static) to match the friend declaration in DuckLoRa.h
 void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
@@ -493,15 +496,32 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
                                uint32_t freq_hz, uint32_t tmst, uint8_t rf_chain,
                                uint32_t bandwidth_hz, uint8_t datarate_sf, uint8_t coderate)
 {
-    printf("[DUCK_RX_CB] Callback invoked: size=%d rssi=%d snr=%.2f freq=%u\n", 
-           size, rssi, snr, freq_hz);
-    
-    // Store the packet in the bridge for readReceivedData() to pick up
+    // Log the topic from the CDP packet (layout: SDUID[0-7] DDUID[8-15] MUID[16-19] TOPIC[20])
+    if (size >= TOPIC_POS + 1) {
+        uint8_t topic = payload[TOPIC_POS];
+        // Print SDUID (source)
+        printf("[DUCK_RX_CB] RX CDP packet: topic=%d, size=%d, rssi=%d, snr=%.2f, freq=%u\n",
+                topic, size, rssi, snr, freq_hz);
+        printf("[DUCK_RX_CB]   SDUID(src) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                payload[0],payload[1],payload[2],payload[3],
+                payload[4],payload[5],payload[6],payload[7]);
+        printf("[DUCK_RX_CB]   DDUID(dst) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                payload[8],payload[9],payload[10],payload[11],
+                payload[12],payload[13],payload[14],payload[15]);
+        printf("[DUCK_RX_CB]   MUID       : %02X%02X%02X%02X\n",
+                payload[16],payload[17],payload[18],payload[19]);
+    } else {
+        printf("[DUCK_RX_CB] RX data: size=%d (too small for CDP packet), rssi=%d, snr=%.2f\n",
+                size, rssi, snr);
+    }    // Store the packet in the bridge for readReceivedData() to pick up
     // Use the C++ API to push directly to the polling buffer
+    /* Store RX frequency so TX reply goes on same channel */
+    last_rx_freq_hz = freq_hz;
+    printf("[DUCK_RX_CB] Stored last_rx_freq_hz=%u Hz for TX reply\n", last_rx_freq_hz);
     std::vector<uint8_t> packet(payload, payload + size);
     cdp_bridge::push_uplink_packet(packet);
     
-    // CRITICAL: Set the receive flag so hub.main() knows to process packets
+    // CRITICAL: Set the receive flag so hub.processPackets() knows to process packets
     // This mimics the behavior of SX127x/SX1262 interrupt handlers
     DuckLoRa::setReceiveFlag(true);
 }
@@ -509,10 +529,35 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
 int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     int err = DUCK_ERR_NONE;
 
-    loginfo_ln("TX data");
-    logdbg_ln(" -> len: %d, %s", length, duckutils::toString(data, length).c_str());
+    // Log the topic from the serialized CDP packet (layout: SDUID[0-7] DDUID[8-15] MUID[16-19] TOPIC[20])
+    if (length >= TOPIC_POS + 1) {
+        uint8_t topic = data[TOPIC_POS];
+        printf("[DUCK_TX_CB] TX CDP packet: topic=%d, length=%d\n", topic, length);
+        printf("[DUCK_TX_CB]   SDUID(src) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                data[0],data[1],data[2],data[3],
+                data[4],data[5],data[6],data[7]);
+        printf("[DUCK_TX_CB]   DDUID(dst) : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                data[8],data[9],data[10],data[11],
+                data[12],data[13],data[14],data[15]);
+        printf("[DUCK_TX_CB]   MUID       : %02X%02X%02X%02X\n",
+                data[16],data[17],data[18],data[19]);
+    } else {
+        printf("[DUCK_TX_CB] TX data: length=%d (too small for CDP packet)\n", length);
+    }
 
     // Enqueue downlink for transmission via the gateway
-    cdp_bridge_enqueue_downlink(data, (int)length);
+    // Note: data is already a serialized CdpPacket from prepareForSending()
+    // Packet structure: [SDUID(8)][DDUID(8)][MUID(4)][TOPIC(1)][TYPE(1)][HOP(1)][CRC(4)][DATA...]
+    /* Reply on the same frequency the RREQ arrived on */
+    printf("[DUCK_TX_CB] Enqueuing downlink on freq=%u Hz\n", last_rx_freq_hz);
+    cdp_bridge_enqueue_downlink_ext(data, (int)length,
+        last_rx_freq_hz, /* reply on same RX channel */
+        0,               /* tmst unused for IMMEDIATE */
+        CDPCFG_RF_LORA_TXPOW,
+        125000,          /* bw_hz: 125 kHz */
+        7,               /* sf: SF7 */
+        1,               /* cr: 4/5 */
+        0                /* rf_chain */
+    );
     return err;
 }

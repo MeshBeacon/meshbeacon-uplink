@@ -33,6 +33,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include <inttypes.h>       /* PRIx64, PRIu64... */
 
 #include <string.h>         /* memset */
+#include <strings.h>        /* strcasecmp */
 #include <signal.h>         /* sigaction */
 #include <time.h>           /* time, clock_gettime, strftime, gmtime */
 #include <sys/time.h>       /* timeval */
@@ -65,6 +66,7 @@ extern "C" {
 #endif
     extern void* hub_init_and_setup(void);  /* Initialize and setup the PapaDuck hub */
     extern void hub_run_loop(void);         /* Run the hub's main processing loop */
+    extern int hub_send_data(uint8_t topic, const char* message, int length, const uint8_t* targetDevice);  /* Send data to MamaDucks */
 #ifdef __cplusplus
 }
 #endif
@@ -177,6 +179,7 @@ static unsigned stat_interval = DEFAULT_STAT; /* time interval (in sec) at which
 
 /* MQTT library */
 static MQTTClient mqtt_client = NULL;
+static volatile bool mqtt_needs_reconnect = false; /* Flag to indicate client needs reconnection */
 
 /* MQTT configuration variables */
 static bool mqtt_enabled = false; /* MQTT publishing enabled */
@@ -186,7 +189,8 @@ static char mqtt_client_id[64] = "papa-duck-gateway-1"; /* MQTT client ID */
 static char mqtt_username[64] = ""; /* MQTT username */
 static char mqtt_password[64] = ""; /* MQTT password */
 static char mqtt_pub_topic[128] = "hub/event"; /* MQTT publish topic */
-static char mqtt_sub_topic[128] = "incoming/say_hello"; /* MQTT subscribe topic */
+static char mqtt_sub_topic[128] = "hub/command"; /* MQTT subscribe topic for incoming commands */
+static char mqtt_response_topic[128] = "hub/response"; /* MQTT topic for command responses and status */
 static int mqtt_keepalive = 60; /* MQTT keepalive interval */
 static bool mqtt_use_tls = false; /* Use TLS for MQTT */
 static char mqtt_ca_cert_file[256] = ""; /* CA certificate file path */
@@ -210,6 +214,15 @@ static int mqtt_queue_head = 0;
 static int mqtt_queue_tail = 0;
 static int mqtt_queue_count = 0;
 static pthread_mutex_t mqtt_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mqtt_reconnect_mutex = PTHREAD_MUTEX_INITIALIZER;  /* prevent parallel reconnection attempts */
+
+/* Command deduplication: rate-limit identical downlink commands */
+#define CMD_DEDUP_WINDOW_MS 30000  /* reject duplicate commands within this window (ms) */
+static char   cmd_dedup_target[16]  = "";
+static uint8_t cmd_dedup_topic      = 0;
+static char   cmd_dedup_message[256] = "";
+static struct timespec cmd_dedup_last_time = {0, 0};
+static pthread_mutex_t cmd_dedup_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* gateway <-> MAC protocol variables */
 static uint32_t net_mac_h; /* Most Significant Nibble, network order */
@@ -353,6 +366,151 @@ static int get_tx_gain_lut_index(uint8_t rf_chain, int8_t rf_power, uint8_t * lu
 /* MQTT function declarations */
 static int mqtt_queue_message(const char* topic, const char* message, int length);
 static int mqtt_publish_queued_messages(void);
+static void mqtt_publish_response(const char* message, int length);
+
+/* MQTT Message Arrival Callback - handles incoming commands */
+int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
+    (void)context;
+    (void)topicLen;
+    
+    MSG("[MQTT] Received command on topic: %s\n", topicName);
+    MSG("[MQTT] Message length: %d bytes\n", message->payloadlen);
+    
+    if (message->payloadlen > 0 && message->payload != NULL) {
+        // Parse JSON command format: {"target":"MAMADUCK","topic":20,"message":"LED_ON"}
+        // For simplicity, we'll use parson library which is already included
+        
+        char *payload_str = malloc(message->payloadlen + 1);
+        if (payload_str == NULL) {
+            MSG("ERROR: [MQTT] Failed to allocate memory for payload\n");
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        
+        memcpy(payload_str, message->payload, message->payloadlen);
+        payload_str[message->payloadlen] = '\0';
+        
+        MSG("[MQTT] Command payload: %s\n", payload_str);
+        
+        // Parse JSON
+        JSON_Value *root_value = json_parse_string(payload_str);
+        if (root_value == NULL) {
+            MSG("WARNING: [MQTT] Failed to parse JSON command\n");
+            free(payload_str);
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        
+        JSON_Object *root_obj = json_value_get_object(root_value);
+        
+        // Extract command parameters
+        const char *target_str = json_object_get_string(root_obj, "target");
+        double topic_num = json_object_get_number(root_obj, "topic");
+        const char *cmd_message = json_object_get_string(root_obj, "message");
+        
+        if (target_str == NULL || topic_num < 20 || cmd_message == NULL) {
+            MSG("WARNING: [MQTT] Invalid command format. Required: {\"target\":\"BROADCAST|DEVICEID\",\"topic\":20-255,\"message\":\"text\"}\n");
+            json_value_free(root_value);
+            free(payload_str);
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        
+        // Parse target device ID
+        uint8_t target_device[8];
+        if (strcasecmp(target_str, "BROADCAST") == 0 || strcasecmp(target_str, "ALL") == 0) {
+            // Broadcast to all MamaDucks
+            memset(target_device, 0xFF, 8);
+            MSG("[MQTT] Target: BROADCAST\n");
+        } else {
+            // Specific device ID (pad with spaces if shorter than 8 chars)
+            memset(target_device, 0x20, 8); // Fill with spaces
+            size_t len = strlen(target_str);
+            if (len > 8) len = 8;
+            memcpy(target_device, target_str, len);
+            MSG("[MQTT] Target device: %.8s\n", target_device);
+        }
+        
+        // Send command to MamaDucks
+        uint8_t topic = (uint8_t)topic_num;
+        int cmd_len = strlen(cmd_message);
+        
+        MSG("[MQTT] Sending command: topic=%d, message='%s', length=%d\n", topic, cmd_message, cmd_len);
+
+        /* --- Command deduplication: drop identical commands within the rate-limit window --- */
+        pthread_mutex_lock(&cmd_dedup_mutex);
+        struct timespec now_ts;
+        clock_gettime(CLOCK_MONOTONIC, &now_ts);
+        long elapsed_ms = (now_ts.tv_sec  - cmd_dedup_last_time.tv_sec)  * 1000L
+                        + (now_ts.tv_nsec - cmd_dedup_last_time.tv_nsec) / 1000000L;
+        bool is_duplicate = (elapsed_ms < CMD_DEDUP_WINDOW_MS)
+                         && (cmd_dedup_topic == topic)
+                         && (strncmp(cmd_dedup_target, target_str, sizeof(cmd_dedup_target) - 1) == 0)
+                         && (strncmp(cmd_dedup_message, cmd_message, sizeof(cmd_dedup_message) - 1) == 0);
+        if (!is_duplicate) {
+            /* Record this command as the last seen */
+            strncpy(cmd_dedup_target,  target_str,  sizeof(cmd_dedup_target)  - 1);
+            cmd_dedup_target[sizeof(cmd_dedup_target) - 1] = '\0';
+            strncpy(cmd_dedup_message, cmd_message, sizeof(cmd_dedup_message) - 1);
+            cmd_dedup_message[sizeof(cmd_dedup_message) - 1] = '\0';
+            cmd_dedup_topic     = topic;
+            cmd_dedup_last_time = now_ts;
+        }
+        pthread_mutex_unlock(&cmd_dedup_mutex);
+
+        if (is_duplicate) {
+            MSG("WARNING: [MQTT] Duplicate command dropped (same target/topic/message within %d ms)\n", CMD_DEDUP_WINDOW_MS);
+            json_value_free(root_value);
+            free(payload_str);
+            MQTTClient_freeMessage(&message);
+            MQTTClient_free(topicName);
+            return 1;
+        }
+        /* --- End deduplication --- */
+
+        int result = hub_send_data(topic, cmd_message, cmd_len, target_device);
+        
+        // Send acknowledgment response
+        char response[512];
+        int response_len;
+        if (result == 0) {
+            MSG("[MQTT] Command forwarded to ClusterDuck network successfully\n");
+            response_len = snprintf(response, sizeof(response),
+                "{\"status\":\"success\",\"target\":\"%.8s\",\"topic\":%d,\"message\":\"%s\"}",
+                target_device, topic, cmd_message);
+        } else {
+            MSG("ERROR: [MQTT] Failed to forward command to ClusterDuck network: %d\n", result);
+            response_len = snprintf(response, sizeof(response),
+                "{\"status\":\"error\",\"code\":%d,\"target\":\"%.8s\",\"topic\":%d,\"message\":\"%s\"}",
+                result, target_device, topic, cmd_message);
+        }
+        
+        // Queue acknowledgment for async publishing (don't publish from within callback)
+        // Publishing from MQTT callback can cause timeouts/deadlocks
+        if (response_len > 0 && response_len < (int)sizeof(response)) {
+            mqtt_queue_message(mqtt_response_topic, response, response_len);
+            MSG("[MQTT] Response queued for async publishing\n");
+        }
+        
+        // Cleanup
+        json_value_free(root_value);
+        free(payload_str);
+    }
+    
+    MQTTClient_freeMessage(&message);
+    MQTTClient_free(topicName);
+    return 1;
+}
+
+/* MQTT Connection Lost Callback */
+void mqtt_connection_lost(void *context, char *cause) {
+    (void)context;
+    MSG("WARNING: [MQTT] Connection lost: %s\n", cause ? cause : "unknown reason");
+    // The health check in thread_duck will handle reconnection
+}
 
 /* threads */
 void thread_up(void);
@@ -371,7 +529,13 @@ int mqtt_init_and_connect(void) {
     
     // If client already exists, clean it up first
     if (mqtt_client != NULL) {
-        MQTTClient_disconnect(mqtt_client, 100);
+        // Mark as needing reconnect to prevent use during cleanup
+        mqtt_needs_reconnect = true;
+        
+        // Only disconnect if actually connected
+        if (MQTTClient_isConnected(mqtt_client)) {
+            MQTTClient_disconnect(mqtt_client, 100);
+        }
         MQTTClient_destroy(&mqtt_client);
         mqtt_client = NULL;
     }
@@ -391,6 +555,10 @@ int mqtt_init_and_connect(void) {
         mqtt_reconnect_attempts++;
         return -1;
     }
+    
+    // Set up callbacks for incoming messages and connection loss
+    MQTTClient_setCallbacks(mqtt_client, NULL, mqtt_connection_lost, mqtt_message_arrived, NULL);
+    MSG("[MQTT] Callbacks registered for incoming messages\n");
     
     // Set up connection options
     MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
@@ -449,10 +617,13 @@ int mqtt_init_and_connect(void) {
 
 /* MQTT Reconnection with Exponential Backoff */
 int mqtt_reconnect_with_backoff(void) {
+    pthread_mutex_lock(&mqtt_reconnect_mutex);
+    
     time_t now = time(NULL);
     
     // Check if enough time has passed since last reconnection attempt
     if (now - mqtt_last_reconnect_attempt < mqtt_reconnect_delay) {
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
         return -1; // Too soon to retry
     }
     
@@ -474,11 +645,16 @@ int mqtt_reconnect_with_backoff(void) {
     } else {
         MSG("[MQTT] Reconnection successful!\n");
         
+        // Clear the reconnect flag
+        mqtt_needs_reconnect = false;
+        
         // Publish any queued messages
         if (mqtt_queue_count > 0) {
             mqtt_publish_queued_messages();
         }
     }
+    
+    pthread_mutex_unlock(&mqtt_reconnect_mutex);
     
     return result;
 }
@@ -529,49 +705,67 @@ static int mqtt_queue_message(const char* topic, const char* message, int length
 static int mqtt_publish_queued_messages(void) {
     int published = 0;
     
-    pthread_mutex_lock(&mqtt_queue_mutex);
-    
     MSG("[MQTT] Publishing %d queued message(s)\n", mqtt_queue_count);
     
-    while (mqtt_queue_count > 0) {
-        // Get message from tail
-        mqtt_queued_message_t* msg = &mqtt_message_queue[mqtt_queue_tail];
-        
-        // Publish message directly without queueing again
-        MQTTClient_message pubmsg = MQTTClient_message_initializer;
-        pubmsg.payload = msg->message;
-        pubmsg.payloadlen = msg->length;
-        pubmsg.qos = 1;
-        pubmsg.retained = 0;
-        
-        MQTTClient_deliveryToken token;
-        int rc = MQTTClient_publishMessage(mqtt_client, msg->topic, &pubmsg, &token);
-        
-        if (rc != MQTTCLIENT_SUCCESS) {
-            MSG("ERROR: [MQTT] Failed to publish queued message, return code %d\n", rc);
-            // Stop processing queue on error
+    while (1) {
+        /* Lock only long enough to dequeue one message */
+        pthread_mutex_lock(&mqtt_queue_mutex);
+        if (mqtt_queue_count == 0) {
             pthread_mutex_unlock(&mqtt_queue_mutex);
-            return published;
+            break;
         }
-        
-        // Wait for delivery
-        rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
-        if (rc != MQTTCLIENT_SUCCESS) {
-            MSG("WARNING: [MQTT] Queued message delivery timeout\n");
+
+        /* Copy message out of queue */
+        mqtt_queued_message_t* msg = &mqtt_message_queue[mqtt_queue_tail];
+        char* topic_copy = strdup(msg->topic);
+        char* payload_copy = (char*)malloc(msg->length);
+        int length_copy = msg->length;
+        if (payload_copy) {
+            memcpy(payload_copy, msg->message, msg->length);
         }
-        
-        // Free message and move to next
+
+        /* Free original and advance queue */
         free(msg->message);
         msg->message = NULL;
-        
         mqtt_queue_tail = (mqtt_queue_tail + 1) % MQTT_QUEUE_SIZE;
         mqtt_queue_count--;
+        pthread_mutex_unlock(&mqtt_queue_mutex);
+
+        if (!payload_copy || !topic_copy) {
+            free(topic_copy);
+            free(payload_copy);
+            continue;
+        }
+
+        /* Publish without holding the queue mutex */
+        MQTTClient_message pubmsg = MQTTClient_message_initializer;
+        pubmsg.payload = payload_copy;
+        pubmsg.payloadlen = length_copy;
+        pubmsg.qos = 1;
+        pubmsg.retained = 0;
+
+        MQTTClient_deliveryToken token;
+        int rc = MQTTClient_publishMessage(mqtt_client, topic_copy, &pubmsg, &token);
+
+        if (rc != MQTTCLIENT_SUCCESS) {
+            MSG("ERROR: [MQTT] Failed to publish queued message, return code %d\n", rc);
+            free(topic_copy);
+            free(payload_copy);
+            return published;
+        }
+
+        /* Wait for delivery with timeout - mutex is NOT held here */
+        rc = MQTTClient_waitForCompletion(mqtt_client, token, 5000L);
+        if (rc != MQTTCLIENT_SUCCESS) {
+            MSG("WARNING: [MQTT] Queued message delivery timeout after 5 seconds\n");
+        }
+
+        free(topic_copy);
+        free(payload_copy);
         published++;
     }
     
     MSG("[MQTT] Successfully published %d queued message(s)\n", published);
-    
-    pthread_mutex_unlock(&mqtt_queue_mutex);
     return published;
 }
 
@@ -585,14 +779,19 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     // Use configured topic if empty topic provided
     const char* pub_topic = (topic && strlen(topic) > 0) ? topic : mqtt_pub_topic;
     
-    // Check if client is connected
-    if (mqtt_client == NULL || !MQTTClient_isConnected(mqtt_client)) {
+    // Lock for thread-safe access to mqtt_client
+    pthread_mutex_lock(&mqtt_reconnect_mutex);
+    
+    // Check if client is connected and doesn't need reconnection
+    if (mqtt_client == NULL || mqtt_needs_reconnect || !MQTTClient_isConnected(mqtt_client)) {
         MSG("WARNING: [MQTT] Client disconnected, queueing message\n");
         
         // Queue the message for later
         mqtt_queue_message(pub_topic, message, length);
         
-        // Try to reconnect with backoff
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
+        
+        // Try to reconnect with backoff (this will acquire the mutex again)
         mqtt_reconnect_with_backoff();
         
         return;
@@ -613,27 +812,31 @@ void mqtt_publish_message(const char* topic, const char* message, int length) {
     if (rc != MQTTCLIENT_SUCCESS) {
         MSG("ERROR: [MQTT] Failed to publish message, return code %d. Queueing message.\n", rc);
         mqtt_queue_message(pub_topic, message, length);
-        // Mark client as disconnected so we'll try to reconnect
-        MQTTClient_disconnect(mqtt_client, 100);
-        MQTTClient_destroy(&mqtt_client);
-        mqtt_client = NULL;
+        // Mark client as needing reconnection
+        mqtt_needs_reconnect = true;
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
         return;
     }
     
-    // Wait for message to be delivered
-    rc = MQTTClient_waitForCompletion(mqtt_client, token, 1000L);
+    // Wait for message to be delivered (5 second timeout)
+    rc = MQTTClient_waitForCompletion(mqtt_client, token, 5000L);
     if (rc != MQTTCLIENT_SUCCESS) {
-        MSG("WARNING: [MQTT] Message delivery timeout. Queueing message and reconnecting.\n");
+        MSG("WARNING: [MQTT] Message delivery timeout after 5 seconds. Queueing message and reconnecting.\n");
         mqtt_queue_message(pub_topic, message, length);
-        // Mark connection as failed and cleanup
-        MQTTClient_disconnect(mqtt_client, 100);
-        MQTTClient_destroy(&mqtt_client);
-        mqtt_client = NULL;
-        // Try to reconnect
-        mqtt_reconnect_with_backoff();
+        // Mark client as needing reconnection - don't touch the client object
+        mqtt_needs_reconnect = true;
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
+        // Note: reconnection will be handled by health check in thread_duck
+        return;
     } else {
         MSG("[MQTT] Message published successfully\n");
+        pthread_mutex_unlock(&mqtt_reconnect_mutex);
     }
+}
+
+/* MQTT Response Publishing function - publishes to response topic */
+void mqtt_publish_response(const char* message, int length) {
+    mqtt_publish_message(mqtt_response_topic, message, length);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1621,20 +1824,34 @@ static int parse_mqtt_configuration(const char * conf_file) {
         MSG("INFO: MQTT password is configured\n");
     }
 
-    /* MQTT publish topic (optional) */
-    str = json_object_get_string(conf_obj, "pub_topic");
-    if (str != NULL) {
-        strncpy(mqtt_pub_topic, str, sizeof mqtt_pub_topic);
-        mqtt_pub_topic[sizeof mqtt_pub_topic - 1] = '\0';
-        MSG("INFO: MQTT publish topic is configured to \"%s\"\n", mqtt_pub_topic);
-    }
-
-    /* MQTT subscribe topic (optional) */
-    str = json_object_get_string(conf_obj, "sub_topic");
-    if (str != NULL) {
-        strncpy(mqtt_sub_topic, str, sizeof mqtt_sub_topic);
-        mqtt_sub_topic[sizeof mqtt_sub_topic - 1] = '\0';
-        MSG("INFO: MQTT subscribe topic is configured to \"%s\"\n", mqtt_sub_topic);
+    /* MQTT topics (using new nested format) */
+    JSON_Object *topics_obj = json_object_get_object(conf_obj, "topics");
+    if (topics_obj != NULL) {
+        /* Publish topic */
+        str = json_object_get_string(topics_obj, "publish");
+        if (str != NULL) {
+            strncpy(mqtt_pub_topic, str, sizeof mqtt_pub_topic);
+            mqtt_pub_topic[sizeof mqtt_pub_topic - 1] = '\0';
+            MSG("INFO: MQTT publish topic is configured to \"%s\"\n", mqtt_pub_topic);
+        }
+        
+        /* Subscribe topic */
+        str = json_object_get_string(topics_obj, "subscribe");
+        if (str != NULL) {
+            strncpy(mqtt_sub_topic, str, sizeof mqtt_sub_topic);
+            mqtt_sub_topic[sizeof mqtt_sub_topic - 1] = '\0';
+            MSG("INFO: MQTT subscribe topic is configured to \"%s\"\n", mqtt_sub_topic);
+        }
+        
+        /* Response topic */
+        str = json_object_get_string(topics_obj, "response");
+        if (str != NULL) {
+            strncpy(mqtt_response_topic, str, sizeof mqtt_response_topic);
+            mqtt_response_topic[sizeof mqtt_response_topic - 1] = '\0';
+            MSG("INFO: MQTT response topic is configured to \"%s\"\n", mqtt_response_topic);
+        }
+    } else {
+        MSG("WARNING: No 'topics' object found in mqtt_conf. Using default topics.\n");
     }
 
     /* MQTT keepalive (optional) */
@@ -2081,6 +2298,7 @@ int main(int argc, char ** argv)
             cp_gps_coord = reference_coord;
         }
 
+	/*
         pthread_mutex_lock(&mx_concent);
         i = lgw_get_temperature(&temperature);
         pthread_mutex_unlock(&mx_concent);
@@ -2089,8 +2307,10 @@ int main(int argc, char ** argv)
         } else {
             printf("### Concentrator temperature: %.0f C ###\n", temperature);
         }
+	*/
 
         /* generate a JSON report (will be sent to server by upstream thread) */
+	/*
         pthread_mutex_lock(&mx_stat_rep);
         if (((gps_enabled == true) && (coord_ok == true)) || (gps_fake_enable == true)) {
             snprintf(status_report, STATUS_SIZE, "\"stat\":{\"time\":\"%s\",\"lati\":%.5f,\"long\":%.5f,\"alti\":%i,\"rxnb\":%u,\"rxok\":%u,\"rxfw\":%u,\"dwnb\":%u,\"txnb\":%u,\"temp\":%.1f}", stat_timestamp, cp_gps_coord.lat, cp_gps_coord.lon, cp_gps_coord.alt, cp_nb_rx_rcv, cp_nb_rx_ok, cp_up_pkt_fwd, cp_dw_dgram_rcv, cp_nb_tx_ok, temperature);
@@ -2099,6 +2319,7 @@ int main(int argc, char ** argv)
         }
         report_ready = true;
         pthread_mutex_unlock(&mx_stat_rep);
+	*/
     }
 
     /* wait for all threads with a COM with the concentrator board to finish (1 fetch cycle max) */
@@ -2541,6 +2762,10 @@ void thread_down(void) {
                                                    &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
                                                    &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
 
+        if (duck_rc != 1) {
+            MSG("DEBUG: [thread_down] cdp_bridge_pop_downlink returned %d, buf_capacity=%u\n", duck_rc, buf_capacity);
+        }
+
         if (duck_rc == 0 && buf_capacity > 0) {
 
             MSG("INFO: ClusterDuck downlink received, size=%u\n", buf_capacity);
@@ -2553,25 +2778,24 @@ void thread_down(void) {
 
                     /* Frequency and timestamp (fallback to CDP defaults if not provided) */
                     txpkt.freq_hz  = CDPCFG_RF_LORA_FREQ_HZ;
-                    txpkt.count_us = dl_tmst;
+                    
+                    /* For ClusterDuck packets, use immediate transmission */
+                    /* Let JIT queue handle collision avoidance automatically */
+                    txpkt.count_us = 0;  /* 0 means ASAP - JIT will schedule avoiding collisions */
+                    txpkt.tx_mode = IMMEDIATE;  /* Use IMMEDIATE mode - JIT will find next available slot */
 
-                    /* Choose tx_mode */
-                    txpkt.tx_mode  = (dl_tmst != 0) ? TIMESTAMPED : IMMEDIATE;
+                /* RF chain and power */
+                txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
+                txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
 
-                    /* RF chain and power */
-                    txpkt.rf_chain = (dl_rf_chain < LGW_RF_CHAIN_NB) ? dl_rf_chain : 0;
-                    txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
-
-                    /* Modulation params — LoRa defaults mapped from CDP config if not provided */
-                    txpkt.modulation = MOD_LORA;
-                    txpkt.bandwidth  = BW_125KHZ;
-                    txpkt.datarate   = DR_LORA_SF7;
-                    txpkt.coderate   = CR_LORA_4_5;
+                /* Modulation params — LoRa defaults mapped from CDP config if not provided */
+                txpkt.modulation = MOD_LORA;
+                txpkt.bandwidth  = BW_125KHZ;
+                txpkt.datarate   = DR_LORA_SF7;
+                txpkt.coderate   = CR_LORA_4_5;
 
 	        MSG("INFO: txpkt size is %u\n", txpkt.size);
-                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;
-
-                /* End of Zaihan's code */
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;  /* CLASS_C calculates ASAP timing */                /* End of Zaihan's code */
 
                 /* reset error/warning results */
                 jit_result = warning_result = JIT_ERROR_OK;
@@ -2597,9 +2821,7 @@ void thread_down(void) {
 
                 /* insert packet to be sent into JIT queue */
                 if (jit_result == JIT_ERROR_OK) {
-                    pthread_mutex_lock(&mx_concent);
-                    lgw_get_instcnt(&current_concentrator_time);
-                    pthread_mutex_unlock(&mx_concent);
+                    /* current_concentrator_time already obtained above */
                     jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
                     if (jit_result != JIT_ERROR_OK) {
                         printf("ERROR: Packet REJECTED (jit error=%d)\n", jit_result);
@@ -2738,6 +2960,71 @@ void thread_down(void) {
                 }
             }
 
+            /* Check for ClusterDuck downlinks inside inner loop for faster response */
+            int duck_rc_inner = cdp_bridge_pop_downlink(duck_payload_buf, &buf_capacity,
+                                                         &dl_freq_hz, &dl_tmst, &dl_tx_power_dbm,
+                                                         &dl_bw_hz, &dl_sf, &dl_cr, &dl_rf_chain);
+            
+            if (duck_rc_inner == 0 && buf_capacity > 0) {
+                MSG("INFO: ClusterDuck downlink received (inner loop), size=%u\n", buf_capacity);
+
+                /* Wait for MamaDuck SX1262 to return to RX mode after its RREQ TX.
+                 * MamaDuck finishes TX, then its radio needs ~5-10ms turnaround.
+                 * Gateway processes RREQ and queues RREP very fast, so we delay
+                 * here to ensure MamaDuck is listening before we transmit. */
+                struct timespec dl_delay = {0, 500000000L}; /* 500ms */
+                nanosleep(&dl_delay, NULL);
+                MSG("INFO: ClusterDuck downlink delay done, transmitting now\n");
+                
+                /* Build and enqueue packet - same code as outer loop */
+                memset(&txpkt, 0, sizeof(txpkt));
+                memcpy(txpkt.payload, duck_payload_buf, buf_capacity);
+                txpkt.size = buf_capacity;
+                /* Reply on the same frequency the RREQ was received on.
+                 * last_rx_freq_hz is stored in DuckLoRa.cpp and passed via enqueue_downlink_ext. */
+                txpkt.freq_hz = (dl_freq_hz > 0) ? dl_freq_hz : CDPCFG_RF_LORA_FREQ_HZ;
+                MSG("INFO: ClusterDuck downlink TX freq=%u Hz\n", txpkt.freq_hz);
+                
+                /* Always get fresh timestamp - ClusterDuck packets are always IMMEDIATE */
+                pthread_mutex_lock(&mx_concent);
+                lgw_get_instcnt(&current_concentrator_time);
+                pthread_mutex_unlock(&mx_concent);
+                
+                /* For ClusterDuck packets, use immediate transmission */
+                /* Let JIT queue handle collision avoidance automatically */
+                txpkt.count_us = 0;  /* 0 means ASAP - JIT will schedule avoiding collisions */
+                txpkt.tx_mode = IMMEDIATE;  /* Use IMMEDIATE mode - JIT will find next available slot */
+                downlink_type = JIT_PKT_TYPE_DOWNLINK_CLASS_C;  /* CLASS_C calculates ASAP timing */
+                
+                /* Configure radio parameters */
+                txpkt.rf_chain = 0;
+                txpkt.rf_power = CDPCFG_RF_LORA_TXPOW;
+                txpkt.modulation = MOD_LORA;
+                txpkt.bandwidth = BW_125KHZ;
+                txpkt.datarate = DR_LORA_SF7;
+                txpkt.coderate = CR_LORA_4_5;
+                txpkt.invert_pol = false; /* CDP is not LoRaWAN — MamaDuck uses normal (non-inverted) IQ */
+                txpkt.preamble = 8;
+                txpkt.no_crc = false;
+                txpkt.no_header = false;
+                
+                MSG("DEBUG: bandwidth=%u (BW_125KHZ=%u), datarate=%u, coderate=%u, tx_mode=%s, count_us=%u\n", 
+                    txpkt.bandwidth, BW_125KHZ, txpkt.datarate, txpkt.coderate,
+                    (txpkt.tx_mode == IMMEDIATE) ? "IMMEDIATE" : "TIMESTAMPED", txpkt.count_us);
+                
+                jit_result = jit_enqueue(&jit_queue[txpkt.rf_chain], current_concentrator_time, &txpkt, downlink_type);
+                if (jit_result == JIT_ERROR_OK) {
+                    MSG("INFO: ClusterDuck packet enqueued to JIT queue\n");
+                    pthread_mutex_lock(&mx_meas_dw);
+                    meas_nb_tx_requested += 1;
+                    pthread_mutex_unlock(&mx_meas_dw);
+                } else {
+                    MSG("ERROR: ClusterDuck packet rejected by JIT queue: %d\n", jit_result);
+                }
+                
+                /* Reset buffer capacity */
+                buf_capacity = sizeof(duck_payload_buf);
+            }
 
         }
     }
@@ -3229,19 +3516,28 @@ void thread_duck(void) {
         /* Call the ClusterDuck main loop to process received packets */
         hub_run_loop();
         
-        /* Periodic MQTT connection health check every 30 seconds (300 * 100ms) */
+        /* Periodic MQTT connection health check */
         if (mqtt_enabled) {
             mqtt_check_counter++;
-            if (mqtt_check_counter >= 300) {
+            
+            // Check more frequently if we have queued messages (every 0.5 seconds)
+            // Otherwise check every 30 seconds
+            int check_interval = (mqtt_queue_count > 0) ? 5 : 300;  // 5 * 100ms = 0.5s, 300 * 100ms = 30s
+            
+            if (mqtt_check_counter >= check_interval) {
                 mqtt_check_counter = 0;
                 
-                // Check if connection is still alive
-                if (mqtt_client != NULL && !MQTTClient_isConnected(mqtt_client)) {
-                    MSG("WARNING: [MQTT] Connection lost (queue count=%d), attempting reconnection...\n", mqtt_queue_count);
+                // Check if connection is still alive or needs reconnection
+                if (mqtt_needs_reconnect || (mqtt_client != NULL && !MQTTClient_isConnected(mqtt_client))) {
+                    MSG("WARNING: [MQTT] Connection lost or needs reconnect (queue count=%d), attempting reconnection...\n", mqtt_queue_count);
                     int result = mqtt_reconnect_with_backoff();
                     if (result == 0) {
                         MSG("[MQTT] Reconnection successful from health check\n");
                     }
+                } else if (mqtt_queue_count > 0 && mqtt_client != NULL && MQTTClient_isConnected(mqtt_client)) {
+                    // Connection is healthy but we have queued messages - publish them
+                    MSG("INFO: [MQTT] Publishing %d queued message(s)...\n", mqtt_queue_count);
+                    mqtt_publish_queued_messages();
                 }
             }
         }
