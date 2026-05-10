@@ -2852,6 +2852,7 @@ void thread_down(void) {
         buff_req[2] = token_l;
 
         /* listen to packets and process them until a new PULL request must be sent */
+        clock_gettime(CLOCK_MONOTONIC, &send_time); /* anchor: marks when this PULL cycle started */
         recv_time = send_time;
         while (((int)difftimespec(recv_time, send_time) < keepalive_time) && !exit_sig && !quit_sig) {
 
@@ -3026,6 +3027,15 @@ void thread_down(void) {
                 buf_capacity = sizeof(duck_payload_buf);
             }
 
+            /* Pace the inner poll loop: the original Semtech thread_down was paced by
+             * recv(sock_down) which blocks up to PULL_TIMEOUT_MS per call.  That recv
+             * was removed in the CDP-only port (no NS socket exists), so without an
+             * explicit sleep here the loop busy-spins at millions of iterations/second,
+             * pegging one CPU core at 100%.  Also advance recv_time so the while
+             * condition (difftimespec < keepalive_time) can eventually become false
+             * and we re-send the keepalive (PULL_DATA) at the right interval. */
+            wait_ms(PULL_TIMEOUT_MS);
+            clock_gettime(CLOCK_MONOTONIC, &recv_time);
         }
     }
     MSG("\nINFO: End of downstream thread\n");
