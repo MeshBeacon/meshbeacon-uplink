@@ -24,6 +24,8 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include <stdlib.h>     /* malloc free */
 #include <unistd.h>     /* lseek, close */
 #include <fcntl.h>      /* open */
+#include <sys/ioctl.h>  /* ioctl, TIOCEXCL */
+#include <sys/file.h>   /* flock */
 #include <string.h>     /* strncmp */
 #include <errno.h>      /* Error number definitions */
 #include <termios.h>    /* POSIX terminal control definitions */
@@ -157,10 +159,21 @@ int lgw_usb_open(const char * com_path, void **com_target_ptr) {
     if (fd < 0) {
         printf("ERROR: failed to open COM port %s - %s\n", portname, strerror(errno));
     } else {
+        /* Acquire an exclusive lock so that a second process cannot use the same
+         * port concurrently.  LOCK_NB makes the call non-blocking: if another
+         * process already holds the lock we fail immediately with EWOULDBLOCK
+         * instead of silently sharing the port and corrupting MCU communication. */
+        if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+            printf("ERROR: COM port %s is already in use by another process - %s\n", portname, strerror(errno));
+            close(fd);
+            free(usb_device);
+            return LGW_USB_ERROR;
+        }
         printf("INFO: Configuring TTY\n");
         x = set_interface_attribs_linux(fd, B115200);
         if (x != 0) {
             printf("ERROR: failed to configure COM port %s\n", portname);
+            close(fd);
             free(usb_device);
             return LGW_USB_ERROR;
         }
@@ -179,6 +192,7 @@ int lgw_usb_open(const char * com_path, void **com_target_ptr) {
         x = set_blocking_linux(fd, true);
         if (x != 0) {
             printf("ERROR: failed to configure COM port %s\n", portname);
+            close(fd);
             free(usb_device);
             return LGW_USB_ERROR;
         }
