@@ -19,6 +19,7 @@ void DuckRouter::insertIntoRoutingTable(Duid deviceID, Duid nextHop, SignalScore
         // Destination already known.  Remove any older record that uses the same
         // next-hop so we don't accumulate duplicates, then append the fresh one.
         // Records via *different* next-hops are kept to preserve alternative paths.
+        index->second.remove_if([neighborRecord](const Neighbor& n) {
             return n.getLastSeen() < neighborRecord.getLastSeen() && n.getDeviceId() == neighborRecord.getDeviceId();
         });
         index->second.push_back(neighborRecord);

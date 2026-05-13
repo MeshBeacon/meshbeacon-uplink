@@ -91,6 +91,7 @@ class DuckRouter {
          * @return The next-hop Duid to forward to, or std::nullopt if the
          *         destination is not in the routing table.
          */
+        std::optional<Duid> getBestNextHop(Duid targetDeviceId);
 
         /**
          * @brief NetworkState if the Duck joins or disconnects from a CDP network
