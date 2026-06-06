@@ -15,7 +15,9 @@
 class Neighbor {
     public:
       Neighbor(Duid devId, Duid nextHop, SignalScore signalInfo, unsigned long lastSeen) :
-        DeviceId(devId), routingScore(signalInfo.signalScore), lastSeen(lastSeen), snr(signalInfo.snr), rssi(signalInfo.rssi) {
+        DeviceId(devId), routingScore(signalInfo.signalScore), lastSeen(lastSeen),
+        snr(signalInfo.snr), rssi(signalInfo.rssi),
+        freq_hz(signalInfo.freq_hz), sf(signalInfo.sf) {
         // How to handle multiple next hops?
       }
         bool operator>(const Neighbor& other) const {
@@ -27,10 +29,14 @@ class Neighbor {
       unsigned long getLastSeen() const { return lastSeen; }
       long getSnr() { return snr; }
       long getRssi() { return rssi; }
+      uint32_t getFreqHz() const { return freq_hz; }
+      uint8_t getSF() const { return sf; }
   private:
       Duid DeviceId;
       unsigned long lastSeen;
       float snr, rssi, routingScore;
+      uint32_t freq_hz = 0;
+      uint8_t  sf = 0;
   };
     
   #endif

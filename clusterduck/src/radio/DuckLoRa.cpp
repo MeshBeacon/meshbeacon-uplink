@@ -40,6 +40,12 @@ CDPCFG_LORA_CLASS lora = new Module(CDPCFG_PIN_LORA_CS, CDPCFG_PIN_LORA_DIO0,
 volatile uint16_t DuckLoRa::interruptFlags = 0;
 volatile bool DuckLoRa::receivedFlag = false;
 
+/* Per-packet RX metadata — updated in readReceivedData() when a packet is dequeued */
+static uint32_t last_rx_freq_hz = CDPCFG_RF_LORA_FREQ_HZ;
+static uint8_t  last_rx_sf      = CDPCFG_RF_LORA_SF;
+static int16_t  last_rx_rssi    = 0;
+static float    last_rx_snr     = 0.0f;
+
 const LoRaConfigParams DuckLoRa::defaultRadioParams = {
     /* band     = */ CDPCFG_RF_LORA_FREQ,
     /* txPower  = */ CDPCFG_RF_LORA_TXPOW,
@@ -201,8 +207,14 @@ std::optional<std::vector<uint8_t>> DuckLoRa::readReceivedData() { //return a st
     // Check if the forwarder provided a packet via the unified bridge
     auto forwarderPkt = cdp_bridge::pop_uplink_packet();
     if (forwarderPkt.has_value()) {
-        packetBytes = std::move(forwarderPkt.value());
-        loginfo_ln("readReceivedData(): got packet from forwarder bridge size=%d", (int)packetBytes.size());
+        auto pkt        = std::move(forwarderPkt.value());
+        packetBytes     = std::move(pkt.payload);
+        last_rx_freq_hz = pkt.freq_hz;
+        last_rx_sf      = pkt.datarate_sf;
+        last_rx_rssi    = pkt.rssi;
+        last_rx_snr     = pkt.snr;
+        loginfo_ln("readReceivedData(): got packet from forwarder bridge size=%d, freq=%u Hz, SF%d",
+                   (int)packetBytes.size(), last_rx_freq_hz, (int)last_rx_sf);
         
         // Clear the receive flag only if the queue is now empty
         // This allows hub.main() to continue processing remaining packets
@@ -372,9 +384,7 @@ float DuckLoRa::getRSSI()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    // In gateway mode, RSSI is provided by the bridge
-    // Return 0 as placeholder since RSSI is passed through the bridge
-    return 0.0f; 
+    return static_cast<float>(last_rx_rssi);
 }
 
 float DuckLoRa::getSNR()
@@ -383,9 +393,17 @@ float DuckLoRa::getSNR()
         logerr_ln("ERROR  LoRa radio not setup");
         return DUCKLORA_ERR_NOT_INITIALIZED;
     }
-    // In gateway mode, SNR is provided by the bridge
-    // Return 0 as placeholder since SNR is passed through the bridge
-    return 0.0f;
+    return last_rx_snr;
+}
+
+uint32_t DuckLoRa::getFreqHz()
+{
+    return last_rx_freq_hz;
+}
+
+uint8_t DuckLoRa::getRxSF()
+{
+    return last_rx_sf;
 }
 
 
@@ -487,7 +505,9 @@ void DuckLoRa::onInterrupt(void) {
 }
 
 /* Last RX frequency - reply on same channel the uplink arrived on */
-static uint32_t last_rx_freq_hz = CDPCFG_RF_LORA_FREQ_HZ;
+// Note: last_rx_freq_hz and companion statics are now defined at the top of this
+// file so readReceivedData() can access them before duck_rx_from_forwarder_cb.
+// See file-scope statics block near the class member statics above.
 
 // Callback invoked when packet_forwarder receives packets via the bridge
 // This function needs extern linkage (non-static) to match the friend declaration in DuckLoRa.h
@@ -513,13 +533,17 @@ void duck_rx_from_forwarder_cb(const uint8_t* payload, uint16_t size,
     } else {
         printf("[DUCK_RX_CB] RX data: size=%d (too small for CDP packet), rssi=%d, snr=%.2f\n",
                 size, rssi, snr);
-    }    // Store the packet in the bridge for readReceivedData() to pick up
-    // Use the C++ API to push directly to the polling buffer
-    /* Store RX frequency so TX reply goes on same channel */
-    last_rx_freq_hz = freq_hz;
-    printf("[DUCK_RX_CB] Stored last_rx_freq_hz=%u Hz for TX reply\n", last_rx_freq_hz);
-    std::vector<uint8_t> packet(payload, payload + size);
-    cdp_bridge::push_uplink_packet(packet);
+    }    // Build UplinkPacket with full radio metadata
+    cdp_bridge::UplinkPacket pkt;
+    pkt.payload     = std::vector<uint8_t>(payload, payload + size);
+    pkt.freq_hz     = freq_hz;
+    pkt.datarate_sf = datarate_sf;
+    pkt.rf_chain    = rf_chain;
+    pkt.rssi        = rssi;
+    pkt.snr         = snr;
+    printf("[DUCK_RX_CB] Pushing UplinkPacket: freq=%u Hz, SF%d, rssi=%d, snr=%.2f, size=%d\n",
+           freq_hz, (int)datarate_sf, (int)rssi, snr, (int)size);
+    cdp_bridge::push_uplink_packet(pkt);
     
     // CRITICAL: Set the receive flag so hub.processPackets() knows to process packets
     // This mimics the behavior of SX127x/SX1262 interrupt handlers

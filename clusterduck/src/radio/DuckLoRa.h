@@ -127,6 +127,20 @@ class DuckLoRa {
          */
         float getSNR();
 
+        /**
+         * @brief Get the center frequency (Hz) of the last received packet.
+         *
+         * @returns Frequency in Hz, e.g. 922800000.
+         */
+        uint32_t getFreqHz();
+
+        /**
+         * @brief Get the spreading factor of the last received packet.
+         *
+         * @returns SF value (e.g. 7–12).
+         */
+        uint8_t getRxSF();
+
     private:
         static volatile uint16_t interruptFlags;
         static volatile bool receivedFlag;

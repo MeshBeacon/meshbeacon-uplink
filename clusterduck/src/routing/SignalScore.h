@@ -38,5 +38,11 @@ struct SignalScore {
      * representing the overall quality of the signal connection.
      */
     float signalScore;
+
+    /** @brief Center frequency (Hz) on which this packet was received */
+    uint32_t freq_hz = 0;
+
+    /** @brief LoRa spreading factor of the received packet (e.g. 7–12) */
+    uint8_t sf = 0;
 };
 #endif //CLUSTERDUCK_PROTOCOL_SIGNALSCORE_H

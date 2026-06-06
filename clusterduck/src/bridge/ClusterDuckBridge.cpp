@@ -36,7 +36,7 @@ static struct {
     // Uplink state
     std::mutex uplink_mutex;
     cdp_rx_callback_t rx_callback = nullptr;
-    std::deque<std::vector<uint8_t>> uplink_queue;  // Queue to handle multiple concurrent packets
+    std::deque<cdp_bridge::UplinkPacket> uplink_queue;  // Queue to handle multiple concurrent packets
     
     // Downlink state
     std::mutex downlink_mutex;
@@ -96,7 +96,14 @@ void cdp_bridge_handle_uplink(
             printf("[CDP_BRIDGE] WARNING: Polling queue full, dropping oldest\n");
             g_bridge.uplink_queue.pop_front();
         }
-        g_bridge.uplink_queue.emplace_back(payload, payload + size);
+        cdp_bridge::UplinkPacket pkt;
+        pkt.payload     = std::vector<uint8_t>(payload, payload + size);
+        pkt.freq_hz     = freq_hz;
+        pkt.datarate_sf = datarate_sf;
+        pkt.rf_chain    = rf_chain;
+        pkt.rssi        = rssi;
+        pkt.snr         = snr;
+        g_bridge.uplink_queue.push_back(std::move(pkt));
     }
 }
 
@@ -251,34 +258,34 @@ bool has_uplink_packet() {
     return !g_bridge.uplink_queue.empty();
 }
 
-std::optional<std::vector<uint8_t>> pop_uplink_packet() {
+std::optional<UplinkPacket> pop_uplink_packet() {
     std::lock_guard<std::mutex> lock(g_bridge.uplink_mutex);
     if (g_bridge.uplink_queue.empty()) {
         return std::nullopt;
     }
-    
+
     auto packet = std::move(g_bridge.uplink_queue.front());
     g_bridge.uplink_queue.pop_front();
-    
-    printf("[CDP_BRIDGE] Popped uplink packet from queue (remaining=%zu): size=%zu\n", 
-           g_bridge.uplink_queue.size(), packet.size());
+
+    printf("[CDP_BRIDGE] Popped uplink packet from queue (remaining=%zu): size=%zu, freq=%u Hz, SF%d\n",
+           g_bridge.uplink_queue.size(), packet.payload.size(), packet.freq_hz, (int)packet.datarate_sf);
     return packet;
 }
 
-void push_uplink_packet(const std::vector<uint8_t>& payload) {
+void push_uplink_packet(const UplinkPacket& pkt) {
     std::lock_guard<std::mutex> lock(g_bridge.uplink_mutex);
-    
+
     // Limit queue size to prevent memory exhaustion
     const size_t MAX_QUEUE_SIZE = 50;
     if (g_bridge.uplink_queue.size() >= MAX_QUEUE_SIZE) {
-        printf("[CDP_BRIDGE] WARNING: Uplink queue full (%zu packets), dropping oldest\n", 
+        printf("[CDP_BRIDGE] WARNING: Uplink queue full (%zu packets), dropping oldest\n",
                g_bridge.uplink_queue.size());
         g_bridge.uplink_queue.pop_front();
     }
-    
-    g_bridge.uplink_queue.push_back(payload);
-    printf("[CDP_BRIDGE] Pushed uplink packet to queue (total=%zu): size=%zu\n", 
-           g_bridge.uplink_queue.size(), payload.size());
+
+    g_bridge.uplink_queue.push_back(pkt);
+    printf("[CDP_BRIDGE] Pushed uplink packet to queue (total=%zu): size=%zu, freq=%u Hz, SF%d\n",
+           g_bridge.uplink_queue.size(), pkt.payload.size(), pkt.freq_hz, (int)pkt.datarate_sf);
 }
 
 } // namespace cdp_bridge
