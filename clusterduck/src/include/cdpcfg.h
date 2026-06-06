@@ -58,14 +58,9 @@
 /** @brief Asyncwebserver Port */
 #define CDPCFG_WEB_PORT 80
 
-/// Frequency Range. Set for US Region 915.0Mhz, Asia Region AS923 is below 923.0Mhz
-#ifdef AS923_RADIO
+/// Frequency Range. AS923 mesh channel (Malaysia).
 #define CDPCFG_RF_LORA_FREQ 922.8f
 #define CDPCFG_RF_LORA_FREQ_HZ 922800000
-#else
-#define CDPCFG_RF_LORA_FREQ 915.0f
-#define CDPCFG_RF_LORA_FREQ_HZ 915000000
-#endif
 /// Bandwidth. Default is 125Mhz
 #define CDPCFG_RF_LORA_BW 125.0f
 /// Spread Factor

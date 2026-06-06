@@ -572,10 +572,12 @@ int DuckLoRa::startTransmitData(uint8_t* data, int length) {
     // Enqueue downlink for transmission via the gateway
     // Note: data is already a serialized CdpPacket from prepareForSending()
     // Packet structure: [SDUID(8)][DDUID(8)][MUID(4)][TOPIC(1)][TYPE(1)][HOP(1)][CRC(4)][DATA...]
-    /* Reply on the same frequency the RREQ arrived on */
-    printf("[DUCK_TX_CB] Enqueuing downlink on freq=%u Hz\n", last_rx_freq_hz);
+    /* Always reply on the mesh channel (922.8 MHz) — MamaDucks return to this
+     * channel after TX_DONE, so this is the only frequency they are listening on
+     * when the downlink arrives. */
+    printf("[DUCK_TX_CB] Enqueuing downlink on mesh channel %u Hz\n", (uint32_t)CDPCFG_RF_LORA_FREQ_HZ);
     cdp_bridge_enqueue_downlink_ext(data, (int)length,
-        last_rx_freq_hz, /* reply on same RX channel */
+        CDPCFG_RF_LORA_FREQ_HZ, /* dedicated downlink = mesh channel */
         0,               /* tmst unused for IMMEDIATE */
         CDPCFG_RF_LORA_TXPOW,
         125000,          /* bw_hz: 125 kHz */
