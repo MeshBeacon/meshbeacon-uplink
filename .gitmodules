@@ -1,3 +1,0 @@
-[submodule "meshtastic"]
-	path = meshtastic
-	url = https://github.com/meshtastic/firmware.git
