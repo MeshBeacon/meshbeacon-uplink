@@ -67,6 +67,9 @@ int cdp_bridge_enqueue_downlink_ext(...);
 // Pop downlink packet for transmission
 int cdp_bridge_pop_downlink(...);
 
+// Block until an uplink packet is available or timeout expires
+void cdp_bridge_wait_for_uplink(int timeout_ms);
+
 // Get statistics
 void cdp_bridge_get_stats(uint32_t* uplink_count, ...);
 ```
@@ -77,14 +80,24 @@ void cdp_bridge_get_stats(uint32_t* uplink_count, ...);
 #include "bridge/ClusterDuckBridge.h"
 
 namespace cdp_bridge {
+    // Uplink packet with radio metadata
+    struct UplinkPacket {
+        std::vector<uint8_t> payload;
+        uint32_t freq_hz     = 0;  // Center frequency in Hz
+        uint8_t  datarate_sf = 0;  // Spreading factor (7–12)
+        uint8_t  rf_chain    = 0;  // RF chain index (0 or 1)
+        int16_t  rssi        = 0;  // RSSI in dBm
+        float    snr         = 0.0f; // SNR in dB
+    };
+
     // Check for available packet
     bool has_uplink_packet();
     
-    // Pop packet from queue
-    std::optional<std::vector<uint8_t>> pop_uplink_packet();
+    // Pop packet from queue (returns full radio metadata)
+    std::optional<UplinkPacket> pop_uplink_packet();
     
-    // Push packet (for testing)
-    void push_uplink_packet(const std::vector<uint8_t>& payload);
+    // Push packet (for testing/simulation)
+    void push_uplink_packet(const UplinkPacket& pkt);
 }
 ```
 
@@ -149,11 +162,17 @@ void setup() {
 
 // Alternative: Polling mode
 void loop() {
+    // Block until a packet arrives or 100ms timeout
+    cdp_bridge_wait_for_uplink(100);
+
     // Check if packet available
     if (cdp_bridge::has_uplink_packet()) {
         auto pkt = cdp_bridge::pop_uplink_packet();
         if (pkt.has_value()) {
-            processPacket(pkt.value());
+            // Access payload and radio metadata
+            processPacket(pkt->payload);
+            printf("Received on freq=%u Hz, SF%d, RSSI=%d dBm\n",
+                   pkt->freq_hz, pkt->datarate_sf, pkt->rssi);
         }
     }
 }
@@ -221,9 +240,9 @@ Enable debug output by setting log level:
 ## Benefits of the Unified Bridge
 
 ```
-✅ 2 files in 1 directory (456 lines total)
-   - src/bridge/ClusterDuckBridge.h (206 lines)
-   - src/bridge/ClusterDuckBridge.cpp (250 lines)
+✅ 2 files in 1 directory (509 lines total)
+   - src/bridge/ClusterDuckBridge.h (218 lines)
+   - src/bridge/ClusterDuckBridge.cpp (291 lines)
 ✅ Clear, consistent naming (cdp_bridge_* prefix)
 ✅ One unified mechanism handling both directions
 ✅ Well-documented with comprehensive API reference
@@ -255,7 +274,7 @@ make clean && make
 ./clusterduckd -c global_conf.json
 
 # Expected output:
-# [DUCK_BRIDGE] RX callback REGISTERED (cb=0x...)
+# [CDP_BRIDGE] RX callback REGISTERED (cb=0x...)
 # INFO: Received 1 packet(s) from concentrator
 # INFO: Passing packet to ClusterDuck (size=X, rssi=-25, snr=10.5)
 # [HUB] got topic: health from MAMADUCK
@@ -273,11 +292,19 @@ void test_bridge() {
                             923000000, 0, 0, 125000, 7, 5);
     
     // Verify statistics
-    uint64_t uplink_count, downlink_count;
-    size_t queue_size;
+    uint32_t uplink_count, downlink_count;
+    uint32_t queue_size;
     cdp_bridge_get_stats(&uplink_count, &downlink_count, &queue_size);
     assert(uplink_count == 1);
     
+    // Pop uplink and inspect radio metadata
+    auto pkt = cdp_bridge::pop_uplink_packet();
+    assert(pkt.has_value());
+    assert(pkt->payload.size() == 3);
+    assert(pkt->freq_hz == 923000000);
+    assert(pkt->datarate_sf == 7);
+    assert(pkt->rssi == -50);
+
     // Test downlink
     uint8_t response[] = {0x04, 0x05};
     int rc = cdp_bridge_enqueue_downlink(response, sizeof(response));
@@ -332,19 +359,28 @@ Potential improvements for the bridge:
 - [ ] Add configurable queue size limits
 - [ ] Support packet serialization for inter-process communication
 
+## Recent Changes
+
+### June 2026 — `UplinkPacket` struct with full radio metadata
+- `pop_uplink_packet()` now returns `std::optional<UplinkPacket>` instead of `std::optional<std::vector<uint8_t>>`
+- `push_uplink_packet()` now takes `const UplinkPacket&` instead of `const std::vector<uint8_t>&`
+- The uplink queue stores full `UplinkPacket` objects, preserving `freq_hz`, `datarate_sf`, `rf_chain`, `rssi`, and `snr` from the concentrator through to C++ consumers
+- Log output now includes frequency and spreading factor for easier debugging
+
+### May 2026 — Low-latency uplink wake (`cdp_bridge_wait_for_uplink`)
+- Added `cdp_bridge_wait_for_uplink(int timeout_ms)` to the C interface
+- Uses a `std::condition_variable` (`uplink_cv`) to wake the ClusterDuck thread immediately when a packet arrives instead of burning a fixed sleep interval
+- Reduces uplink processing latency from up to `timeout_ms` to near-zero
+
+### February 2026 — Race condition fix (concurrent MamaDucks)
+- Replaced the single-packet uplink buffer (`std::optional<std::vector<uint8_t>>`) with a bounded `std::deque` queue (max 50 packets)
+- Prevents packet loss and segfaults when multiple MamaDucks transmit simultaneously
+- `has_uplink_packet()` / `pop_uplink_packet()` updated to operate on the queue
+
 ## Support
 
 For questions or issues:
 1. Check this README for common issues
 2. Review the API documentation in `ClusterDuckBridge.h`
-4. Open an issue in the repository
-
----
-
-## Support
-
-For questions or issues with the refactored bridge:
-1. Check this README
-2. Review the header file documentation
 3. Examine the example code in `clusterduckd.c`
-4. File an issue on GitHub
+4. Open an issue in the repository
