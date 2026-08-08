@@ -573,6 +573,13 @@ int mqtt_init_and_connect(void) {
     MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
     conn_opts.keepAliveInterval = mqtt_keepalive;
     conn_opts.cleansession = 1;
+    /* Bound the worst-case blocking time of MQTTClient_connect(). This
+     * function (and mqtt_reconnect_with_backoff()) runs on thread_duck,
+     * which shares CPU time with the ClusterDuck routing loop and, on a
+     * flaky/cellular backhaul, Paho's default 30s connectTimeout can stall
+     * that thread long enough to starve the concentrator polling threads
+     * (RX buffer overflow/desync, stale TX packets in the JIT queue). */
+    conn_opts.connectTimeout = 5; /* seconds */
     
     // Set username and password if provided
     if (strlen(mqtt_username) > 0) {
@@ -763,11 +770,17 @@ static int mqtt_publish_queued_messages(void) {
             return published;
         }
 
-        /* Wait for delivery with timeout - mutex is NOT held here */
-        rc = MQTTClient_waitForCompletion(mqtt_client, token, 5000L);
-        if (rc != MQTTCLIENT_SUCCESS) {
-            MSG("WARNING: [MQTT] Queued message delivery timeout after 5 seconds\n");
-        }
+        /* Do NOT block here waiting for broker delivery confirmation:
+         * MQTTClient_publishMessage() already hands the message off to the
+         * Paho client's background network thread, which manages QoS 1
+         * acknowledgement/retry on its own. This function runs on
+         * thread_duck, which is shared with time-critical ClusterDuck/JIT
+         * housekeeping; a slow/flaky backhaul previously caused
+         * MQTTClient_waitForCompletion() to block this thread for up to 5s
+         * per queued message (serially), starving the concentrator polling
+         * threads long enough to overflow/desync the SX1302 RX buffer
+         * (observed as "no syncword found") and to let scheduled TX packets
+         * go stale in the JIT queue ("Packet dropped"). */
 
         free(topic_copy);
         free(payload_copy);
