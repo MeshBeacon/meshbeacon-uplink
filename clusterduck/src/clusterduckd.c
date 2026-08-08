@@ -48,6 +48,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include <netdb.h>          /* gai_strerror */
 
 #include <pthread.h>
+#include <sched.h>      /* sched_get_priority_max, SCHED_FIFO */
 
 #include "trace.h"
 #include "jitqueue.h"
@@ -235,7 +236,15 @@ static int sock_down; /* socket for downstream traffic */
 static struct timeval push_timeout_half = {0, (PUSH_TIMEOUT_MS * 500)}; /* cut in half, critical for throughput */
 
 /* hardware access control and correction */
-pthread_mutex_t mx_concent = PTHREAD_MUTEX_INITIALIZER; /* control access to the concentrator */
+/* NOTE: initialized in main() with the PTHREAD_PRIO_INHERIT protocol so that
+ * a low-priority thread holding it (thread_duck, thread_valid, thread_ss,
+ * thread_down) temporarily inherits thread_up's priority instead of blocking
+ * the time-critical RX fetch for an unbounded amount of time. This matters
+ * on SPI-connected concentrators (unlike the USB eval board, where the SPI
+ * transactions are handled by a dedicated MCU) since the host CPU itself has
+ * to service the SX1302 RX FIFO in time, and this process runs several other
+ * threads that also contend for the same concentrator mutex. */
+pthread_mutex_t mx_concent; /* control access to the concentrator */
 static pthread_mutex_t mx_xcorr = PTHREAD_MUTEX_INITIALIZER; /* control access to the XTAL correction */
 static bool xtal_correct_ok = false; /* set true when XTAL correction is stable enough */
 static double xtal_correct = 1.0;
@@ -2155,6 +2164,19 @@ int main(int argc, char ** argv)
         printf("INFO: concentrator EUI: 0x%016" PRIx64 "\n", eui);
     }
 
+    /* Initialize the concentrator mutex with priority inheritance to bound
+     * the time thread_up can be blocked behind lower-priority threads that
+     * also access the concentrator over SPI (see mx_concent declaration). */
+    {
+        pthread_mutexattr_t mx_concent_attr;
+        pthread_mutexattr_init(&mx_concent_attr);
+        if (pthread_mutexattr_setprotocol(&mx_concent_attr, PTHREAD_PRIO_INHERIT) != 0) {
+            MSG("WARNING: [main] priority-inherit mutex protocol not supported, falling back to a regular mutex\n");
+        }
+        pthread_mutex_init(&mx_concent, &mx_concent_attr);
+        pthread_mutexattr_destroy(&mx_concent_attr);
+    }
+
     /* Initialize ClusterDuck Protocol */
     MSG("INFO: [main] Initializing ClusterDuck Protocol\n");
     void* hub_ptr = hub_init_and_setup();
@@ -2169,6 +2191,19 @@ int main(int argc, char ** argv)
     if (i != 0) {
         MSG("ERROR: [main] impossible to create upstream thread\n");
         exit(EXIT_FAILURE);
+    }
+    /* Best-effort: give the RX fetch thread real-time priority so it gets
+     * scheduled promptly and can drain the SX1302 RX FIFO/burst-read the SPI
+     * bus before it overflows or gets corrupted mid-transfer. Requires
+     * CAP_SYS_NICE (root); harmless if it fails, just less deterministic
+     * latency on a busy host. */
+    {
+        struct sched_param sp;
+        memset(&sp, 0, sizeof sp);
+        sp.sched_priority = sched_get_priority_max(SCHED_FIFO);
+        if (pthread_setschedparam(thrid_up, SCHED_FIFO, &sp) != 0) {
+            MSG("WARNING: [main] could not set real-time priority on upstream thread (need root?), continuing with default scheduling\n");
+        }
     }
     i = pthread_create(&thrid_down, NULL, (void * (*)(void *))thread_down, NULL);
     if (i != 0) {
