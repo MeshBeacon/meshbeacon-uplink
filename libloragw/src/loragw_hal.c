@@ -206,6 +206,11 @@ FILE * log_file = NULL;
 static int     ts_fd = -1;
 static uint8_t ts_addr = 0xFF;
 
+/* Last known-good temperature reading, used as a fallback if a transient I2C
+ * read failure occurs, so that an unrelated sensor glitch does not discard
+ * already successfully fetched RX packets (see lgw_receive) */
+static float last_known_temperature = 25.0;
+
 /* I2C AD5338 handles */
 static int     ad_fd = -1;
 
@@ -1289,8 +1294,14 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data) {
     /* Apply RSSI temperature compensation */
     res = lgw_get_temperature(&current_temperature);
     if (res != LGW_I2C_SUCCESS) {
-        printf("ERROR: failed to get current temperature\n");
-        return LGW_HAL_ERROR;
+        /* A transient I2C glitch on the temperature sensor is unrelated to the
+         * packets that were just successfully fetched from the SX1302 RX
+         * buffer: don't discard them nor report a fatal error, just fall back
+         * to the last known-good temperature for the RSSI compensation. */
+        printf("WARNING: failed to get current temperature, using last known value (%.1f C)\n", last_known_temperature);
+        current_temperature = last_known_temperature;
+    } else {
+        last_known_temperature = current_temperature;
     }
 
     /* Iterate on the RX buffer to get parsed packets */
