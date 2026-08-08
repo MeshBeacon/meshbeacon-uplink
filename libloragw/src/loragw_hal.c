@@ -1118,8 +1118,14 @@ int lgw_start(void) {
             }
         }
         if (i == sizeof I2C_PORT_TEMP_SENSOR) {
-            printf("ERROR: no temperature sensor found.\n");
-            return LGW_HAL_ERROR;
+            /* Some boards (e.g. non-reference SPI designs) don't expose an
+             * STTS751-compatible sensor on the I2C bus at all. Treat this as
+             * non-fatal: RSSI temperature compensation will be skipped
+             * (lgw_get_temperature/lgw_receive fall back to a fixed value)
+             * instead of preventing the concentrator from starting. */
+            printf("WARNING: no temperature sensor found, RSSI temperature compensation will be disabled.\n");
+            ts_fd = -1;
+            ts_addr = 0xFF;
         }
 
         /* Configure ADC AD338R for full duplex (CN490 reference design) */
