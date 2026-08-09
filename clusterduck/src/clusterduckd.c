@@ -86,7 +86,7 @@ extern "C" {
 #define CDPCFG_RF_LORA_FREQ_HZ 922800000
 #define CDPCFG_RF_LORA_BW 125.0f
 #define CDPCFG_RF_LORA_SF 7
-#define CDPCFG_RF_LORA_TXPOW 14
+#define CDPCFG_RF_LORA_TXPOW 27
 #define CDPCFG_RF_LORA_GAIN 0
 
 /* -------------------------------------------------------------------------- */
@@ -2462,6 +2462,15 @@ void thread_up(void) {
     /* report management variable */
     bool send_report = false;
 
+    /* Count consecutive lgw_receive() failures. A single transient HAL/SPI
+     * error should not take the whole daemon down (there is no systemd unit
+     * with Restart=always for clusterduckd, so exit() here just means "stop
+     * receiving packets until someone notices and restarts it manually").
+     * Only bail out if failures are persistent, which indicates a genuinely
+     * dead concentrator link rather than a one-off glitch. */
+    int consecutive_rx_errors = 0;
+#define MAX_CONSECUTIVE_RX_ERRORS 10
+
     /* Zaihan's code */
     const uint8_t *payload;    // usually pkt->payload
     uint16_t size;             // usually pkt->size
@@ -2510,9 +2519,17 @@ void thread_up(void) {
         nb_pkt = lgw_receive(NB_PKT_MAX, rxpkt);
         pthread_mutex_unlock(&mx_concent);
         if (nb_pkt == LGW_HAL_ERROR) {
-            MSG("ERROR: [up] failed packet fetch, exiting\n");
-            exit(EXIT_FAILURE);
+            consecutive_rx_errors += 1;
+            MSG("WARNING: [up] packet fetch failed (%d/%d consecutive), retrying\n",
+                consecutive_rx_errors, MAX_CONSECUTIVE_RX_ERRORS);
+            if (consecutive_rx_errors >= MAX_CONSECUTIVE_RX_ERRORS) {
+                MSG("ERROR: [up] %d consecutive packet fetch failures, exiting\n", consecutive_rx_errors);
+                exit(EXIT_FAILURE);
+            }
+            wait_ms(FETCH_SLEEP_MS);
+            continue;
         }
+        consecutive_rx_errors = 0;
 
         /* check if there are status report to send */
         send_report = report_ready; /* copy the variable so it doesn't change mid-function */
