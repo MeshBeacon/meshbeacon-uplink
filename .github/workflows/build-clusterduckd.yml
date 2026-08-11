@@ -1,0 +1,113 @@
+name: Build clusterduckd
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Cross-compiled directly on the amd64 runner using a Debian/Ubuntu
+      # cross toolchain + arm64 multiarch dev libraries, same approach as
+      # the mips job below (no Docker/QEMU emulation involved).
+      - name: Add arm64 architecture and ports repo
+        run: |
+          sudo dpkg --add-architecture arm64
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main universe" \
+            | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+          sudo apt-get update
+
+      - name: Install arm64 cross toolchain and libraries
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            crossbuild-essential-arm64 \
+            libusb-1.0-0-dev:arm64 \
+            libpaho-mqtt-dev:arm64
+
+      - name: Build clusterduckd for arm64
+        run: make clusterduck ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+
+      - name: Verify binary architecture
+        run: file clusterduck/clusterduckd
+
+      - name: Package artifact
+        run: |
+          VERSION="$(cat VERSION)"
+          ARTIFACT="clusterduckd-${VERSION}-linux-arm64"
+          mkdir -p dist
+          cp clusterduck/clusterduckd "dist/${ARTIFACT}"
+          echo "ARTIFACT_PATH=dist/${ARTIFACT}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clusterduckd-linux-arm64
+          path: ${{ env.ARTIFACT_PATH }}
+
+  build-mips:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Docker/QEMU emulation no longer supports the mips (32-bit, big-endian)
+      # architecture, so this job cross-compiles directly on the amd64 runner
+      # using a Debian/Ubuntu cross toolchain + mips multiarch dev libraries,
+      # rather than running an emulated mips container.
+      - name: Add mips architecture and ports repo
+        run: |
+          sudo dpkg --add-architecture mips
+          echo "deb [arch=mips] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main universe" \
+            | sudo tee /etc/apt/sources.list.d/mips-ports.list
+          sudo apt-get update
+
+      - name: Install mips cross toolchain and libraries
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            crossbuild-essential-mips \
+            libusb-1.0-0-dev:mips \
+            libpaho-mqtt-dev:mips
+
+      - name: Build clusterduckd for mips
+        run: make clusterduck ARCH=mips CROSS_COMPILE=mips-linux-gnu-
+
+      - name: Verify binary architecture
+        run: file clusterduck/clusterduckd
+
+      - name: Package artifact
+        run: |
+          VERSION="$(cat VERSION)"
+          ARTIFACT="clusterduckd-${VERSION}-linux-mips"
+          mkdir -p dist
+          cp clusterduck/clusterduckd "dist/${ARTIFACT}"
+          echo "ARTIFACT_PATH=dist/${ARTIFACT}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clusterduckd-linux-mips
+          path: ${{ env.ARTIFACT_PATH }}
+
+  release:
+    needs: [build-arm64, build-mips]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
