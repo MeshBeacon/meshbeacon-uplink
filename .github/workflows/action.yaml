@@ -23,10 +23,6 @@ jobs:
           sudo dpkg --add-architecture arm64
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs) main universe" \
             | sudo tee /etc/apt/sources.list.d/arm64-ports.list
-          sudo apt-get update
-
-      - name: Use Azure mirror
-        run: |
           sudo sed -i 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g' /etc/apt/sources.list
           sudo sed -i 's|http://security.ubuntu.com|http://azure.archive.ubuntu.com|g' /etc/apt/sources.list
           sudo apt-get update
