@@ -72,12 +72,12 @@ jobs:
       - name: Install mips cross toolchain and libraries
         run: |
           sudo apt-get install -y --no-install-recommends \
-            crossbuild-essential-mips \
-            libusb-1.0-0-dev:mips \
-            libpaho-mqtt-dev:mips
+            crossbuild-essential-mipsel \
+            libusb-1.0-0-dev:mipsel \
+            libpaho-mqtt-dev:mipsel
 
-      - name: Build clusterduckd for mips
-        run: make clusterduck ARCH=mips CROSS_COMPILE=mips-linux-gnu-
+      - name: Build clusterduckd for mips24kec
+        run: make clusterduck ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- CFLAGS='-Wa,-mips32r2,-march=24kec,-mtune=24kec -mel -EL -Os -ffunction-sections -fdata-sections' LDFLAGS='-Wa,-mips32r2,-march=24kec,-mtune=24kec -mel -EL -Os -ffunction-sections -fdata-sections'
 
       - name: Verify binary architecture
         run: file clusterduck/clusterduckd
@@ -85,7 +85,7 @@ jobs:
       - name: Package artifact
         run: |
           VERSION="$(cat VERSION)"
-          ARTIFACT="clusterduckd-${VERSION}-linux-mips"
+          ARTIFACT="clusterduckd-${VERSION}-linux-mipsel-24kec
           mkdir -p dist
           cp clusterduck/clusterduckd "dist/${ARTIFACT}"
           echo "ARTIFACT_PATH=dist/${ARTIFACT}" >> "$GITHUB_ENV"
