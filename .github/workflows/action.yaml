@@ -32,7 +32,8 @@ jobs:
               apt-get install -y --no-install-recommends \
                 crossbuild-essential-arm64 \
                 libusb-1.0-0-dev:arm64 \
-                libpaho-mqtt-dev:arm64
+                libpaho-mqtt-dev:arm64 \
+                libprotobuf-dev:arm64
               make clusterduck ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
             "
 
@@ -79,7 +80,8 @@ jobs:
               apt-get install -y --no-install-recommends \
                 crossbuild-essential-mipsel \
                 libusb-1.0-0-dev:mipsel \
-                libpaho-mqtt-dev:mipsel
+                libpaho-mqtt-dev:mipsel \
+                libprotobuf-dev:mipsel
               make clusterduck ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- \
                 CC='mipsel-linux-gnu-gcc -EL -mips32r2 -march=24kec -mtune=24kec' \
                 CXX='mipsel-linux-gnu-g++ -EL -mips32r2 -march=24kec -mtune=24kec'
