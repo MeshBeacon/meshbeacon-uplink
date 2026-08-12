@@ -8,7 +8,7 @@ export
 
 .PHONY: all clean install install_conf libtools libloragw packet_forwarder util_net_downlink util_chip_id util_boot util_spectral_scan
 
-all: libtools libloragw packet_forwarder util_net_downlink util_chip_id util_boot util_spectral_scan
+all: libtools libloragw packet_forwarder util_net_downlink util_chip_id util_boot util_spectral_scan clusterduck
 
 libtools:
 	$(MAKE) all -e -C $@
@@ -17,6 +17,9 @@ libloragw: libtools
 	$(MAKE) all -e -C $@
 
 packet_forwarder: libloragw
+	$(MAKE) all -e -C $@
+
+clusterduck: libloragw
 	$(MAKE) all -e -C $@
 
 util_net_downlink: libtools
@@ -39,6 +42,7 @@ clean:
 	$(MAKE) clean -e -C util_chip_id
 	$(MAKE) clean -e -C util_boot
 	$(MAKE) clean -e -C util_spectral_scan
+	$(MAKE) clean -e -C clusterduck
 
 install:
 	$(MAKE) install -e -C libloragw
@@ -47,6 +51,7 @@ install:
 	$(MAKE) install -e -C util_chip_id
 	$(MAKE) install -e -C util_boot
 	$(MAKE) install -e -C util_spectral_scan
+	$(MAKE) install -e -C clusterduck
 
 install_conf:
 	$(MAKE) install_conf -e -C packet_forwarder
