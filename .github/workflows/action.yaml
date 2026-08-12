@@ -44,7 +44,7 @@ jobs:
 
       - name: Package artifact
         run: |
-          VERSION="$(cat VERSION)"
+          VERSION="${{ github.ref_name }}"
           ARTIFACT="clusterduckd-${VERSION}-linux-arm64"
           mkdir -p dist
           cp clusterduck/clusterduckd "dist/${ARTIFACT}"
@@ -93,7 +93,7 @@ jobs:
 
       - name: Package artifact
         run: |
-          VERSION="$(cat VERSION)"
+          VERSION="${{ github.ref_name }}"
           ARTIFACT="clusterduckd-${VERSION}-linux-mipsel-24kec"
           mkdir -p dist
           cp clusterduck/clusterduckd "dist/${ARTIFACT}"
