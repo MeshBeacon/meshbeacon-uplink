@@ -67,6 +67,8 @@ install:
 	@echo "---- Copying clusterduckd files to $(TARGET_IP):$(TARGET_DIR)"
 	@ssh $(TARGET_USR)@$(TARGET_IP) "mkdir -p $(TARGET_DIR)"
 	@scp clusterduckd $(TARGET_USR)@$(TARGET_IP):$(TARGET_DIR)
+	@echo "---- Granting CAP_SYS_NICE so the upstream thread can get real-time priority without running as root"
+	@ssh $(TARGET_USR)@$(TARGET_IP) "sudo setcap cap_sys_nice=eip $(TARGET_DIR)/clusterduckd"
 install_conf:
 	@echo "---- Copying clusterduckd conf files to $(TARGET_IP):$(TARGET_DIR)"
 	@ssh $(TARGET_USR)@$(TARGET_IP) "mkdir -p $(TARGET_DIR)"
