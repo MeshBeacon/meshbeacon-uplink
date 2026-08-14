@@ -98,6 +98,33 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         size_t rawLength = cdp_packet.data.size();
         std::string message = payload;
 
+        // sealed_uplink/encrypted_data carry a cleartext, AAD-authenticated
+        // real-topic byte as the first byte of the data section (see
+        // Duck::sendSealedData()/sendEncryptedData(), meshbeacon-firmware's
+        // src/Ducks/Duck.h), followed by ephemeralPublicKey||nonce||ciphertext||tag
+        // (or nonce||ciphertext||tag for encrypted_data). Recover that real
+        // topic into eventType and record which encrypted transport this came
+        // in on via payload.transport -- ProcessMqttMessage.php (OpenDMS)
+        // needs both to rebuild the AAD and pick unsealFromDuck() vs
+        // decryptFromDuck(). Without this, every encrypted uplink (including
+        // an encrypted SOS) is reported with eventType=="sealed_uplink"/
+        // "encrypted_data", payload.transport is never set, decryption is
+        // never attempted, and the operator sees the raw base64 ciphertext
+        // instead of the parsed SOS/alert/status data.
+        std::string realTopicName;
+        if ((cdp_packet.topic == reservedTopic::sealed_uplink ||
+             cdp_packet.topic == reservedTopic::encrypted_data) &&
+            !payload.empty()) {
+            CdpPacket realTopicPacket;
+            realTopicPacket.topic = static_cast<uint8_t>(payload[0]);
+            realTopicName = realTopicPacket.topicToString();
+            doc["eventType"] = realTopicName.c_str();
+            doc["payload"]["transport"] = cdpTopic.c_str();
+            message = payload.substr(1);
+            rawData = reinterpret_cast<const uint8_t *>(message.data());
+            rawLength = message.size();
+        }
+
         if (duckpayload::isProtobuf(rawData, rawLength)) {
             switch (cdp_packet.topic) {
                 case topics::gps: {
