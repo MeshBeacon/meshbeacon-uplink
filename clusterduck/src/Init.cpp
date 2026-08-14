@@ -48,16 +48,7 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     doc["payload"]["hops"] = cdp_packet.hopCount;
     doc["payload"]["duckType"] = cdp_packet.duckType;
 
-    // DUIDs are hash-derived (SHA256(pubkey) truncated) and thus arbitrary
-    // binary, not text -- embedding raw bytes via sduid.c_str() truncates
-    // at any embedded 0x00 byte, corrupting this field (and anything that
-    // depends on recovering the exact original bytes, e.g. sealed-uplink
-    // AAD reconstruction on the OpenDMS side). Base64-encode it, same fix
-    // already applied to the Message field below.
-    char sduidB64[4 * ((8 + 2) / 3) + 1];
-    int sduidB64Len = bin_to_b64(reinterpret_cast<const uint8_t*>(sduid.data()), (int)sduid.size(), sduidB64, sizeof(sduidB64));
-    std::string sduidEncoded = (sduidB64Len >= 0) ? std::string(sduidB64, (size_t)sduidB64Len) : sduid.c_str();
-    doc["payload"]["DeviceID"] = sduidEncoded.c_str();
+    doc["payload"]["DeviceID"] = sduid.c_str();
     
     // For RREQ/RREP packets, extract and include the routing path
     // Don't include raw Message field since we're parsing it into structured data
@@ -67,15 +58,11 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         try {
             RouteJSON routeDoc(cdp_packet.data);
             
-            // Extract origin and destination as strings. DUIDs are
-            // arbitrary binary (SHA256(pubkey) truncated), so hex-encode
-            // rather than using duckutils::toString(), which returns a
-            // literal "ERROR: Non-printable character" string for any
-            // non-printable byte -- virtually guaranteed for a real DUID.
+            // Extract origin and destination as strings.
             Duid originDuid = routeDoc.getOrigin();
             Duid destDuid = routeDoc.getDestination();
-            std::string originStr = duckutils::arrayToHexString(originDuid);
-            std::string destStr = duckutils::arrayToHexString(destDuid);
+            std::string originStr = duckutils::toString(originDuid);
+            std::string destStr = duckutils::toString(destDuid);
             
             doc["payload"]["origin"] = originStr.c_str();
             doc["payload"]["destination"] = destStr.c_str();
@@ -88,10 +75,8 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
             
             if (pathVec.empty()) {
                 // If path is empty, use the source device ID as fallback.
-                // Use the already-base64-encoded form, not the raw binary
-                // sduid, for the same reason DeviceID above is encoded.
-                pathArray.add(sduidEncoded.c_str());
-                printf("[HUB] Route packet has empty path, using DeviceID '%s' as fallback\n", sduidEncoded.c_str());
+                pathArray.add(sduid.c_str());
+                printf("[HUB] Route packet has empty path, using DeviceID '%s' as fallback\n", sduid.c_str());
             } else {
                 for (const auto& node : pathVec) {
                     pathArray.add(node);
@@ -101,10 +86,10 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
             }
         } catch (const std::exception& e) {
             printf("[HUB] ERROR: Exception parsing RouteJSON: %s, using DeviceID as fallback\n", e.what());
-            doc["payload"]["origin"] = sduidEncoded.c_str();
+            doc["payload"]["origin"] = sduid.c_str();
             doc["payload"]["destination"] = "UNKNOWN";
             JsonArray pathArray = doc["payload"]["path"].to<JsonArray>();
-            pathArray.add(sduidEncoded.c_str());
+            pathArray.add(sduid.c_str());
         }
     } else {
         // For non-routing packets, include the raw message.
