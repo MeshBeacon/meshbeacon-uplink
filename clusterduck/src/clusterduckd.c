@@ -377,6 +377,43 @@ static int mqtt_queue_message(const char* topic, const char* message, int length
 static int mqtt_publish_queued_messages(void);
 static void mqtt_publish_response(const char* message, int length);
 
+/* libtools/src/base64.c's char_to_code()/code_to_char() call exit(EXIT_FAILURE)
+ * on any character outside the base64 alphabet -- there is no way to recover
+ * from that via b64_to_bin()'s return value, since the process is already
+ * terminated before it returns. Since encrypted_cmd feeds attacker-controlled
+ * MQTT input into b64_to_bin(), it must be validated against the base64
+ * charset *before* calling b64_to_bin(), or a single malformed command can
+ * crash the whole gateway daemon (DoS). */
+static bool is_valid_base64_str(const char *s, size_t len);
+
+/* Validate that [s, s+len) contains only characters from the base64 alphabet
+ * (A-Z, a-z, 0-9, +, /), with '=' padding (0-2 chars) allowed only at the very
+ * end. Must be checked before calling b64_to_bin()/bin_to_b64() -- see comment
+ * on the forward declaration above. */
+static bool is_valid_base64_str(const char *s, size_t len) {
+    if (s == NULL || len == 0) {
+        return false;
+    }
+    size_t pad = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (c == '=') {
+            pad++;
+            continue;
+        }
+        if (pad > 0) {
+            /* padding must only appear at the end */
+            return false;
+        }
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '+' || c == '/';
+        if (!ok) {
+            return false;
+        }
+    }
+    return pad <= 2;
+}
+
 /* MQTT Message Arrival Callback - handles incoming commands */
 int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
     (void)context;
@@ -449,6 +486,14 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
             // encrypted_cmd carries a base64-encoded raw 8-byte DUID (may
             // contain arbitrary/non-printable bytes, e.g. hash-derived DUIDs)
             // -- must be decoded, not copied/padded as text.
+            if (!is_valid_base64_str(target_str, strlen(target_str))) {
+                MSG("WARNING: [MQTT] Invalid base64 target for encrypted_cmd (non-base64 characters)\n");
+                json_value_free(root_value);
+                free(payload_str);
+                MQTTClient_freeMessage(&message);
+                MQTTClient_free(topicName);
+                return 1;
+            }
             int decoded_len = b64_to_bin(target_str, strlen(target_str), target_device, sizeof(target_device));
             if (decoded_len != 8) {
                 MSG("WARNING: [MQTT] Invalid base64 target for encrypted_cmd (expected 8 decoded bytes, got %d)\n", decoded_len);
@@ -474,6 +519,14 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
 
         if (is_encrypted_cmd) {
             // message is base64 ciphertext, not raw text -- decode before sending.
+            if (!is_valid_base64_str(cmd_message, (size_t)cmd_len)) {
+                MSG("WARNING: [MQTT] Invalid base64 message for encrypted_cmd (non-base64 characters)\n");
+                json_value_free(root_value);
+                free(payload_str);
+                MQTTClient_freeMessage(&message);
+                MQTTClient_free(topicName);
+                return 1;
+            }
             int decoded_len = b64_to_bin(cmd_message, cmd_len, decoded_message, sizeof(decoded_message));
             if (decoded_len < 0) {
                 MSG("WARNING: [MQTT] Invalid base64 message for encrypted_cmd\n");
