@@ -3,6 +3,7 @@
 #include "routing/RouteJSON.h"
 #include "bridge/ClusterDuckBridge.h"
 #include "payloads/DuckPayloads.h"
+#include "utils/safe_base64.h"
 
 // Forward declare C functions for MQTT publishing
 extern "C" {
@@ -157,7 +158,29 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
             }
         }
 
-        doc["payload"]["Message"] = message.c_str();
+        // `message` may still be an opaque binary blob here -- e.g. a
+        // sealed_uplink/encrypted_data ciphertext or an identity_announce
+        // raw public key, none of which are protobuf-decodable text. Only
+        // the ciphertext/key bytes themselves are ever opaque; the CDP
+        // topic byte is always sent in the clear by the firmware, so we
+        // don't need to special-case any particular reserved topic here --
+        // we just detect whether what we're about to embed in a JSON
+        // string is safe printable text, and base64-encode it if not.
+        const unsigned char *msgBytes = reinterpret_cast<const unsigned char *>(message.data());
+        if (is_safe_json_text(msgBytes, message.size())) {
+            doc["payload"]["Message"] = message.c_str();
+        } else {
+            std::vector<char> encoded(safe_b64_encoded_len(message.size()) + 1);
+            int encodedLen = safe_b64_encode(msgBytes, message.size(), encoded.data(), encoded.size());
+            if (encodedLen < 0) {
+                printf("[HUB] ERROR: failed to base64-encode binary payload (topic=%d, size=%zu)\n",
+                       cdp_packet.topic, message.size());
+                doc["payload"]["Message"] = "";
+            } else {
+                doc["payload"]["Message"] = encoded.data();
+                doc["payload"]["encoding"] = "base64";
+            }
+        }
     }
 
     std::string jsonstat;
