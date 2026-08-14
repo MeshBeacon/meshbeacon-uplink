@@ -29,6 +29,24 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
 
     std::string muid(cdp_packet.muid.begin(), cdp_packet.muid.end());
     std::string sduid(cdp_packet.sduid.begin(), cdp_packet.sduid.end());
+
+    // sealed_uplink/encrypted_data carry a cleartext (AAD-authenticated,
+    // NOT itself encrypted) real-application-topic prefix byte at the
+    // start of the data section -- see Duck.h sendSealedData()/
+    // sendEncryptedData(). Recover it here so eventType/dispatch reflect
+    // the real topic (gps/status/alert/...) instead of the generic
+    // transport indicator, matching pre-encryption behavior. This does
+    // NOT decrypt anything -- only OpenDMS holds the private key for that.
+    uint8_t transportTopic = cdp_packet.topic;
+    std::string transportTopicStr = cdp_packet.topicToString();
+    bool hasCleartextTopicPrefix = transportTopic == reservedTopic::sealed_uplink
+        || transportTopic == reservedTopic::encrypted_data;
+    size_t cipherOffset = 0;
+    if (hasCleartextTopicPrefix && !cdp_packet.data.empty()) {
+        cdp_packet.topic = cdp_packet.data.front();
+        cipherOffset = 1;
+    }
+
     std::string cdpTopic = cdp_packet.topicToString();
 
     printf("[HUB] got topic: %s from %s\n",cdpTopic.c_str(), sduid.c_str());
@@ -98,14 +116,19 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         // detect that via the leading format-marker byte and reconstruct
         // the equivalent legacy text so downstream consumers of
         // payload.Message keep working unchanged.
-        const uint8_t *rawData = reinterpret_cast<const uint8_t *>(cdp_packet.data.data());
-        size_t rawLength = cdp_packet.data.size();
+        // rawData/rawLength skip the cleartext topic-prefix byte (if any,
+        // see cipherOffset above) so only the actual encrypted material
+        // (nonce||ciphertext||tag, or ephemeralPubKey||nonce||ciphertext||tag
+        // for sealed_uplink) is base64-encoded as Message below -- the topic
+        // itself is no longer folded into that blob.
+        const uint8_t *rawData = reinterpret_cast<const uint8_t *>(cdp_packet.data.data()) + cipherOffset;
+        size_t rawLength = cdp_packet.data.size() - cipherOffset;
         std::string message = payload;
 
-        bool isEncryptedTopic = cdp_packet.topic == reservedTopic::encrypted_cmd
-            || cdp_packet.topic == reservedTopic::sealed_uplink
-            || cdp_packet.topic == reservedTopic::identity_announce
-            || cdp_packet.topic == reservedTopic::encrypted_data;
+        bool isEncryptedTopic = transportTopic == reservedTopic::encrypted_cmd
+            || transportTopic == reservedTopic::sealed_uplink
+            || transportTopic == reservedTopic::identity_announce
+            || transportTopic == reservedTopic::encrypted_data;
 
         if (isEncryptedTopic) {
             // These topics carry raw AEAD ciphertext or an X25519 public
@@ -122,6 +145,13 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
             char b64[4 * ((MAX_DATA_LENGTH + 2) / 3) + 1];
             int b64Len = bin_to_b64(rawData, (int)rawLength, b64, sizeof(b64));
             message = (b64Len >= 0) ? std::string(b64, (size_t)b64Len) : "";
+            // identity_announce is a plaintext X25519 public key, not
+            // ciphertext -- don't mark it "encrypted". The other three
+            // are genuine AEAD ciphertext OpenDMS must decrypt/unseal.
+            if (transportTopic != reservedTopic::identity_announce) {
+                doc["payload"]["encrypted"] = true;
+                doc["payload"]["transport"] = transportTopicStr.c_str();
+            }
         } else if (duckpayload::isProtobuf(rawData, rawLength)) {
             switch (cdp_packet.topic) {
                 case topics::gps: {
