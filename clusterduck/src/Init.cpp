@@ -9,10 +9,6 @@ extern "C" {
     void mqtt_publish_message(const char* topic, const char* message, int length);
 }
 
-extern "C" {
-    #include "base64.h"
-}
-
 // --- Global Objects ---
 PapaDuck hub("PAPADUCK");
 
@@ -29,24 +25,6 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
 
     std::string muid(cdp_packet.muid.begin(), cdp_packet.muid.end());
     std::string sduid(cdp_packet.sduid.begin(), cdp_packet.sduid.end());
-
-    // sealed_uplink/encrypted_data carry a cleartext (AAD-authenticated,
-    // NOT itself encrypted) real-application-topic prefix byte at the
-    // start of the data section -- see Duck.h sendSealedData()/
-    // sendEncryptedData(). Recover it here so eventType/dispatch reflect
-    // the real topic (gps/status/alert/...) instead of the generic
-    // transport indicator, matching pre-encryption behavior. This does
-    // NOT decrypt anything -- only OpenDMS holds the private key for that.
-    uint8_t transportTopic = cdp_packet.topic;
-    std::string transportTopicStr = cdp_packet.topicToString();
-    bool hasCleartextTopicPrefix = transportTopic == reservedTopic::sealed_uplink
-        || transportTopic == reservedTopic::encrypted_data;
-    size_t cipherOffset = 0;
-    if (hasCleartextTopicPrefix && !cdp_packet.data.empty()) {
-        cdp_packet.topic = cdp_packet.data.front();
-        cipherOffset = 1;
-    }
-
     std::string cdpTopic = cdp_packet.topicToString();
 
     printf("[HUB] got topic: %s from %s\n",cdpTopic.c_str(), sduid.c_str());
@@ -65,7 +43,6 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
     // Payload fields at root level (official PapaDuck format)
     doc["payload"]["hops"] = cdp_packet.hopCount;
     doc["payload"]["duckType"] = cdp_packet.duckType;
-
     doc["payload"]["DeviceID"] = sduid.c_str();
     
     // For RREQ/RREP packets, extract and include the routing path
@@ -76,7 +53,7 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         try {
             RouteJSON routeDoc(cdp_packet.data);
             
-            // Extract origin and destination as strings.
+            // Extract origin and destination as strings
             Duid originDuid = routeDoc.getOrigin();
             Duid destDuid = routeDoc.getDestination();
             std::string originStr = duckutils::toString(originDuid);
@@ -92,7 +69,7 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
             printf("[HUB] Parsed RouteJSON, path vector size: %zu\n", pathVec.size());
             
             if (pathVec.empty()) {
-                // If path is empty, use the source device ID as fallback.
+                // If path is empty, use the source device ID as fallback
                 pathArray.add(sduid.c_str());
                 printf("[HUB] Route packet has empty path, using DeviceID '%s' as fallback\n", sduid.c_str());
             } else {
@@ -116,43 +93,11 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         // detect that via the leading format-marker byte and reconstruct
         // the equivalent legacy text so downstream consumers of
         // payload.Message keep working unchanged.
-        // rawData/rawLength skip the cleartext topic-prefix byte (if any,
-        // see cipherOffset above) so only the actual encrypted material
-        // (nonce||ciphertext||tag, or ephemeralPubKey||nonce||ciphertext||tag
-        // for sealed_uplink) is base64-encoded as Message below -- the topic
-        // itself is no longer folded into that blob.
-        const uint8_t *rawData = reinterpret_cast<const uint8_t *>(cdp_packet.data.data()) + cipherOffset;
-        size_t rawLength = cdp_packet.data.size() - cipherOffset;
+        const uint8_t *rawData = reinterpret_cast<const uint8_t *>(cdp_packet.data.data());
+        size_t rawLength = cdp_packet.data.size();
         std::string message = payload;
 
-        bool isEncryptedTopic = transportTopic == reservedTopic::encrypted_cmd
-            || transportTopic == reservedTopic::sealed_uplink
-            || transportTopic == reservedTopic::identity_announce
-            || transportTopic == reservedTopic::encrypted_data;
-
-        if (isEncryptedTopic) {
-            // These topics carry raw AEAD ciphertext or an X25519 public
-            // key -- arbitrary binary, not text. Stuffing that directly
-            // into a std::string and then a NUL-terminated JSON string
-            // value (as done below via message.c_str()) truncates at the
-            // first embedded 0x00 byte and can produce invalid UTF-8,
-            // which makes PHP's json_decode() discard the *entire*
-            // message downstream, not just this field. Base64-encode
-            // first so it survives the JSON/MQTT hop intact -- matches
-            // DuckCryptoService's $payloadB64 convention on the OpenDMS
-            // side, so it can be passed straight through to
-            // decryptFromDuck()/unsealFromDuck() without re-encoding.
-            char b64[4 * ((MAX_DATA_LENGTH + 2) / 3) + 1];
-            int b64Len = bin_to_b64(rawData, (int)rawLength, b64, sizeof(b64));
-            message = (b64Len >= 0) ? std::string(b64, (size_t)b64Len) : "";
-            // identity_announce is a plaintext X25519 public key, not
-            // ciphertext -- don't mark it "encrypted". The other three
-            // are genuine AEAD ciphertext OpenDMS must decrypt/unseal.
-            if (transportTopic != reservedTopic::identity_announce) {
-                doc["payload"]["encrypted"] = true;
-                doc["payload"]["transport"] = transportTopicStr.c_str();
-            }
-        } else if (duckpayload::isProtobuf(rawData, rawLength)) {
+        if (duckpayload::isProtobuf(rawData, rawLength)) {
             switch (cdp_packet.topic) {
                 case topics::gps: {
                     duckcdp::GpsReading gps;
