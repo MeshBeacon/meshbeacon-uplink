@@ -121,6 +121,22 @@ enum reservedTopic {
   cmd = 0x05,
   rreq = 0x06,
   rrep = 0x07,
+  // OpenDMS -> Duck downlink command, end-to-end encrypted with OpenDMS's
+  // static X25519 key + the target Duck's static key (ECDH session mode).
+  encrypted_cmd = 0x08,
+  // Duck -> OpenDMS uplink, one-way sealed to OpenDMS's pinned static
+  // X25519 public key with a fresh ephemeral keypair (anonymous seal, no
+  // reply path). See DuckCryptoService::unsealFromDuck() on the OpenDMS
+  // side.
+  sealed_uplink = 0x09,
+  // Broadcast/directed announcement of a Duck's long-term X25519 public
+  // key, so peers can learn it for encrypted_data session encryption
+  // (TOFU: first announcement seen per SDUID is trusted).
+  identity_announce = 0x0A,
+  // Duck <-> Duck end-to-end encrypted data (static-static X25519 ECDH
+  // session between the two Ducks' long-term identities, keyed off the
+  // sender's DUID via a prior identity_announce).
+  encrypted_data = 0x0B,
   max_reserved = 0x0F
 };
 
@@ -297,6 +313,14 @@ class CdpPacket {
                 return "ping";
             case reservedTopic::pong:
                 return "pong";
+            case reservedTopic::encrypted_cmd:
+                return "encrypted_cmd";
+            case reservedTopic::sealed_uplink:
+                return "sealed_uplink";
+            case reservedTopic::identity_announce:
+                return "identity_announce";
+            case reservedTopic::encrypted_data:
+                return "encrypted_data";
             default:
                 return "unknown";
             }

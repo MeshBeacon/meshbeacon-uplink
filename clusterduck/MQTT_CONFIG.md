@@ -105,11 +105,17 @@ The gateway publishes messages in the standard ClusterDuck Protocol PapaDuck for
   "payload": {
     "hops": 0,
     "duckType": 2,
-    "DeviceID": "MAMADUCK",
+    "DeviceID": "TUFNQURVQ0s=",
     "Message": "C:149|FM:366872"
   }
 }
 ```
+
+Note: `DeviceID` above is the base64 encoding of the raw 8-byte DUID (shown
+here as base64 of the placeholder text `"MAMADUCK"` purely for
+illustration; a real DUID is hash-derived binary, not readable text). See
+"Message Fields" below for full encoding rules, including when `Message`
+is also base64-encoded.
 
 ### Message Fields
 
@@ -125,8 +131,23 @@ The gateway publishes messages in the standard ClusterDuck Protocol PapaDuck for
     - `2` = MamaDuck  
     - `3` = PapaDuck
     - `4` = DetectorDuck
-  - **DeviceID**: Source device identifier (SDUID) - 8 character string
-  - **Message**: Actual payload data from the source device
+  - **DeviceID**: Source device identifier (SDUID). DUIDs are hash-derived
+    (SHA256(pubkey) truncated) and thus arbitrary binary, not text, so this
+    field is **always base64-encoded** before being placed in this JSON
+    (raw bytes would truncate at an embedded `0x00` and break `json_decode()`
+    downstream). Consumers must base64-decode this field to recover the raw
+    8-byte DUID.
+  - **Message**: Actual payload data from the source device. For most CDP
+    topics this is legacy plain text (protobuf-encoded payloads, per
+    `duck_payloads.proto`, are decoded and converted to this legacy text
+    format by the gateway before publishing). However, for the
+    `encrypted_cmd`, `sealed_uplink`, `identity_announce`, and
+    `encrypted_data` topics, this field carries raw AEAD ciphertext or an
+    X25519 public key and is **base64-encoded** instead (same convention as
+    `DeviceID` above, and matching `DuckCryptoService`'s `$payloadB64`
+    handling on the OpenDMS/meshbeacon side). Consumers must check
+    `eventType` and base64-decode `Message` for these four topics before
+    passing it to decryption/identity-parsing logic.
 
 This format matches the official ClusterDuck Protocol examples and is compatible with the web dashboard in `examples/Basic-Ducks/PapaDuck/web/`.
 

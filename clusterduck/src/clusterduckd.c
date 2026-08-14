@@ -418,9 +418,17 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
         const char *target_str = json_object_get_string(root_obj, "target");
         double topic_num = json_object_get_number(root_obj, "topic");
         const char *cmd_message = json_object_get_string(root_obj, "message");
-        
-        if (target_str == NULL || topic_num < 20 || cmd_message == NULL) {
-            MSG("WARNING: [MQTT] Invalid command format. Required: {\"target\":\"BROADCAST|DEVICEID\",\"topic\":20-255,\"message\":\"text\"}\n");
+
+        /* reservedTopic::encrypted_cmd (see meshbeacon-firmware/src/CdpPacket.h) --
+         * the one reserved topic explicitly allowed through the app-topic gate
+         * below, so OpenDMS can send encrypted operator downlink commands through
+         * this LoRa-concentrator gateway. Its target/message are base64, not raw
+         * text -- decoded separately below. */
+        #define TOPIC_ENCRYPTED_CMD 0x08
+        bool is_encrypted_cmd = (topic_num == TOPIC_ENCRYPTED_CMD);
+
+        if (target_str == NULL || cmd_message == NULL || (topic_num < 20 && !is_encrypted_cmd)) {
+            MSG("WARNING: [MQTT] Invalid command format. Required: {\"target\":\"BROADCAST|DEVICEID\",\"topic\":20-255 or 8 (encrypted_cmd),\"message\":\"text\"}\n");
             json_value_free(root_value);
             free(payload_str);
             MQTTClient_freeMessage(&message);
@@ -430,10 +438,27 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
         
         // Parse target device ID
         uint8_t target_device[8];
+        uint8_t decoded_message[256];
+        const uint8_t *send_message = (const uint8_t *)cmd_message;
+        int send_len;
         if (strcasecmp(target_str, "BROADCAST") == 0 || strcasecmp(target_str, "ALL") == 0) {
             // Broadcast to all MamaDucks
             memset(target_device, 0xFF, 8);
             MSG("[MQTT] Target: BROADCAST\n");
+        } else if (is_encrypted_cmd) {
+            // encrypted_cmd carries a base64-encoded raw 8-byte DUID (may
+            // contain arbitrary/non-printable bytes, e.g. hash-derived DUIDs)
+            // -- must be decoded, not copied/padded as text.
+            int decoded_len = b64_to_bin(target_str, strlen(target_str), target_device, sizeof(target_device));
+            if (decoded_len != 8) {
+                MSG("WARNING: [MQTT] Invalid base64 target for encrypted_cmd (expected 8 decoded bytes, got %d)\n", decoded_len);
+                json_value_free(root_value);
+                free(payload_str);
+                MQTTClient_freeMessage(&message);
+                MQTTClient_free(topicName);
+                return 1;
+            }
+            MSG("[MQTT] Target device (encrypted_cmd, base64-decoded)\n");
         } else {
             // Specific device ID (pad with spaces if shorter than 8 chars)
             memset(target_device, 0x20, 8); // Fill with spaces
@@ -442,10 +467,27 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
             memcpy(target_device, target_str, len);
             MSG("[MQTT] Target device: %.8s\n", target_device);
         }
-        
+
         // Send command to MamaDucks
         uint8_t topic = (uint8_t)topic_num;
         int cmd_len = strlen(cmd_message);
+
+        if (is_encrypted_cmd) {
+            // message is base64 ciphertext, not raw text -- decode before sending.
+            int decoded_len = b64_to_bin(cmd_message, cmd_len, decoded_message, sizeof(decoded_message));
+            if (decoded_len < 0) {
+                MSG("WARNING: [MQTT] Invalid base64 message for encrypted_cmd\n");
+                json_value_free(root_value);
+                free(payload_str);
+                MQTTClient_freeMessage(&message);
+                MQTTClient_free(topicName);
+                return 1;
+            }
+            send_message = decoded_message;
+            send_len = decoded_len;
+        } else {
+            send_len = cmd_len;
+        }
         
         MSG("[MQTT] Sending command: topic=%d, message='%s', length=%d\n", topic, cmd_message, cmd_len);
 
@@ -480,7 +522,7 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
         //}
         /* --- End deduplication --- */
 
-        int result = hub_send_data(topic, cmd_message, cmd_len, target_device);
+        int result = hub_send_data(topic, (const char *)send_message, send_len, target_device);
         
         // Send acknowledgment response
         char response[512];
@@ -488,13 +530,13 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
         if (result == 0) {
             MSG("[MQTT] Command forwarded to ClusterDuck network successfully\n");
             response_len = snprintf(response, sizeof(response),
-                "{\"status\":\"success\",\"target\":\"%.8s\",\"topic\":%d,\"message\":\"%s\"}",
-                target_device, topic, cmd_message);
+                "{\"status\":\"success\",\"target\":\"%s\",\"topic\":%d,\"message\":\"%s\"}",
+                target_str, topic, cmd_message);
         } else {
             MSG("ERROR: [MQTT] Failed to forward command to ClusterDuck network: %d\n", result);
             response_len = snprintf(response, sizeof(response),
-                "{\"status\":\"error\",\"code\":%d,\"target\":\"%.8s\",\"topic\":%d,\"message\":\"%s\"}",
-                result, target_device, topic, cmd_message);
+                "{\"status\":\"error\",\"code\":%d,\"target\":\"%s\",\"topic\":%d,\"message\":\"%s\"}",
+                result, target_str, topic, cmd_message);
         }
         
         // Queue acknowledgment for async publishing (don't publish from within callback)
