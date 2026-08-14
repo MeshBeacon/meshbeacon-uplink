@@ -414,6 +414,24 @@ static bool is_valid_base64_str(const char *s, size_t len) {
     return pad <= 2;
 }
 
+/* Render `len` bytes of `data` as a lowercase hex string into `out` (must be
+ * at least 2*len + 1 bytes). Used to log the resolved 8-byte target DUID
+ * unambiguously for ops -- real DUIDs are hash-derived arbitrary binary, so
+ * neither raw text nor base64 is safe/readable to eyeball directly, but hex
+ * always is. */
+static void format_hex(const uint8_t *data, size_t len, char *out, size_t out_size) {
+    static const char hex_chars[] = "0123456789abcdef";
+    size_t max_bytes = (out_size - 1) / 2;
+    if (len > max_bytes) {
+        len = max_bytes;
+    }
+    for (size_t i = 0; i < len; i++) {
+        out[i * 2]     = hex_chars[(data[i] >> 4) & 0xF];
+        out[i * 2 + 1] = hex_chars[data[i] & 0xF];
+    }
+    out[len * 2] = '\0';
+}
+
 /* MQTT Message Arrival Callback - handles incoming commands */
 int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
     (void)context;
@@ -503,14 +521,18 @@ int mqtt_message_arrived(void *context, char *topicName, int topicLen, MQTTClien
                 MQTTClient_free(topicName);
                 return 1;
             }
-            MSG("[MQTT] Target device (encrypted_cmd, base64-decoded)\n");
         } else {
             // Specific device ID (pad with spaces if shorter than 8 chars)
             memset(target_device, 0x20, 8); // Fill with spaces
             size_t len = strlen(target_str);
             if (len > 8) len = 8;
             memcpy(target_device, target_str, len);
-            MSG("[MQTT] Target device: %.8s\n", target_device);
+        }
+
+        if (strcasecmp(target_str, "BROADCAST") != 0 && strcasecmp(target_str, "ALL") != 0) {
+            char target_hex[17];
+            format_hex(target_device, sizeof(target_device), target_hex, sizeof(target_hex));
+            MSG("[MQTT] Target device (hex): %s\n", target_hex);
         }
 
         // Send command to MamaDucks
