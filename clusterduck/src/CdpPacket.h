@@ -328,6 +328,8 @@ class CdpPacket {
                 return "identity_announce";
             case reservedTopic::encrypted_data:
                 return "encrypted_data";
+            case reservedTopic::authenticated_sealed_uplink:
+                return "authenticated_sealed_uplink";
             default:
                 return "unknown";
             }
