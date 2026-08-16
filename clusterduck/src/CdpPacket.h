@@ -137,6 +137,13 @@ enum reservedTopic {
   // session between the two Ducks' long-term identities, keyed off the
   // sender's DUID via a prior identity_announce).
   encrypted_data = 0x0B,
+  // One-way Duck -> OpenDMS uplink data, same as sealed_uplink but with
+  // an added sender-authentication + replay-protection layer (see
+  // meshbeacon-firmware's Duck::sendSealedData() and CdpPacket.h). Init.cpp
+  // forwards this payload the same way it forwards sealed_uplink/
+  // encrypted_data -- decryption/MAC verification happens on the OpenDMS
+  // side, not here.
+  authenticated_sealed_uplink = 0x0D,
   max_reserved = 0x0F
 };
 

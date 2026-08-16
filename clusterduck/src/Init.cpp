@@ -98,21 +98,26 @@ void processMessageFromDucks(CdpPacket cdp_packet) {
         size_t rawLength = cdp_packet.data.size();
         std::string message = payload;
 
-        // sealed_uplink/encrypted_data carry a cleartext, AAD-authenticated
-        // real-topic byte as the first byte of the data section (see
-        // Duck::sendSealedData()/sendEncryptedData(), meshbeacon-firmware's
-        // src/Ducks/Duck.h), followed by ephemeralPublicKey||nonce||ciphertext||tag
-        // (or nonce||ciphertext||tag for encrypted_data). Recover that real
-        // topic into eventType and record which encrypted transport this came
-        // in on via payload.transport -- ProcessMqttMessage.php (OpenDMS)
-        // needs both to rebuild the AAD and pick unsealFromDuck() vs
-        // decryptFromDuck(). Without this, every encrypted uplink (including
-        // an encrypted SOS) is reported with eventType=="sealed_uplink"/
-        // "encrypted_data", payload.transport is never set, decryption is
-        // never attempted, and the operator sees the raw base64 ciphertext
-        // instead of the parsed SOS/alert/status data.
+        // sealed_uplink/authenticated_sealed_uplink/encrypted_data carry a
+        // cleartext, AAD-authenticated real-topic byte as the first byte of
+        // the data section (see Duck::sendSealedData()/sendEncryptedData(),
+        // meshbeacon-firmware's src/Ducks/Duck.h), followed by
+        // ephemeralPublicKey||nonce||ciphertext||tag (or
+        // nonce||ciphertext||tag for encrypted_data, or
+        // counter||ephemeralPublicKey||nonce||ciphertext||tag||macNonce||macTag
+        // for authenticated_sealed_uplink). Recover that real topic into
+        // eventType and record which encrypted transport this came in on via
+        // payload.transport -- ProcessMqttMessage.php (OpenDMS) needs both to
+        // rebuild the AAD and pick unsealFromDuck() vs decryptFromDuck() vs
+        // the authenticated_sealed_uplink verification path. Without this,
+        // every encrypted uplink (including an encrypted SOS) is reported
+        // with eventType=="sealed_uplink"/"encrypted_data", payload.transport
+        // is never set, decryption is never attempted, and the operator sees
+        // the raw base64 ciphertext instead of the parsed SOS/alert/status
+        // data.
         std::string realTopicName;
         if ((cdp_packet.topic == reservedTopic::sealed_uplink ||
+             cdp_packet.topic == reservedTopic::authenticated_sealed_uplink ||
              cdp_packet.topic == reservedTopic::encrypted_data) &&
             !payload.empty()) {
             CdpPacket realTopicPacket;
