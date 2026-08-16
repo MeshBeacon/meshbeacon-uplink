@@ -94,6 +94,30 @@ enum topics {
   health = 0x15,
   // Send duck commands
   dcmd = 0x16,
+  // OpenDMS -> Duck downlink command, end-to-end encrypted with OpenDMS's
+  // static X25519 key + the target Duck's static key (ECDH session mode).
+  // Moved out of reservedTopic (2026-08) -- these crypto transports are
+  // application-level topics like any other, not core CDP protocol
+  // topics, and reservedTopic's 0x00-0x0F range was nearly exhausted.
+  encrypted_cmd = 0x1B,
+  // Duck -> OpenDMS uplink, one-way sealed to OpenDMS's pinned static
+  // X25519 public key with a fresh ephemeral keypair (anonymous seal, no
+  // reply path). See DuckCryptoService::unsealFromDuck() on the OpenDMS
+  // side.
+  sealed_uplink = 0x1C,
+  // Broadcast/directed announcement of a Duck's long-term X25519 public
+  // key, so peers can learn it for encrypted_data session encryption
+  // (TOFU: first announcement seen per SDUID is trusted).
+  identity_announce = 0x1D,
+  // Duck <-> Duck end-to-end encrypted data (static-static X25519 ECDH
+  // session between the two Ducks' long-term identities, keyed off the
+  // sender's DUID via a prior identity_announce).
+  encrypted_data = 0x1E,
+  // Broadcast data authenticated with the deployment's pre-shared mesh
+  // group symmetric key. Ducks without the group key configured can't
+  // decrypt it but still relay it blindly for others in the mesh that
+  // might.
+  group_broadcast = 0x1F,
   //gps
   gps = 0xEA,
   // MQ7 Gas Sensor
@@ -121,29 +145,6 @@ enum reservedTopic {
   cmd = 0x05,
   rreq = 0x06,
   rrep = 0x07,
-  // OpenDMS -> Duck downlink command, end-to-end encrypted with OpenDMS's
-  // static X25519 key + the target Duck's static key (ECDH session mode).
-  encrypted_cmd = 0x08,
-  // Duck -> OpenDMS uplink, one-way sealed to OpenDMS's pinned static
-  // X25519 public key with a fresh ephemeral keypair (anonymous seal, no
-  // reply path). See DuckCryptoService::unsealFromDuck() on the OpenDMS
-  // side.
-  sealed_uplink = 0x09,
-  // Broadcast/directed announcement of a Duck's long-term X25519 public
-  // key, so peers can learn it for encrypted_data session encryption
-  // (TOFU: first announcement seen per SDUID is trusted).
-  identity_announce = 0x0A,
-  // Duck <-> Duck end-to-end encrypted data (static-static X25519 ECDH
-  // session between the two Ducks' long-term identities, keyed off the
-  // sender's DUID via a prior identity_announce).
-  encrypted_data = 0x0B,
-  // One-way Duck -> OpenDMS uplink data, same as sealed_uplink but with
-  // an added sender-authentication + replay-protection layer (see
-  // meshbeacon-firmware's Duck::sendSealedData() and CdpPacket.h). Init.cpp
-  // forwards this payload the same way it forwards sealed_uplink/
-  // encrypted_data -- decryption/MAC verification happens on the OpenDMS
-  // side, not here.
-  authenticated_sealed_uplink = 0x0D,
   max_reserved = 0x0F
 };
 
@@ -320,16 +321,16 @@ class CdpPacket {
                 return "ping";
             case reservedTopic::pong:
                 return "pong";
-            case reservedTopic::encrypted_cmd:
+            case topics::encrypted_cmd:
                 return "encrypted_cmd";
-            case reservedTopic::sealed_uplink:
+            case topics::sealed_uplink:
                 return "sealed_uplink";
-            case reservedTopic::identity_announce:
+            case topics::identity_announce:
                 return "identity_announce";
-            case reservedTopic::encrypted_data:
+            case topics::encrypted_data:
                 return "encrypted_data";
-            case reservedTopic::authenticated_sealed_uplink:
-                return "authenticated_sealed_uplink";
+            case topics::group_broadcast:
+                return "group_broadcast";
             default:
                 return "unknown";
             }
