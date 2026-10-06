@@ -39,6 +39,7 @@ longer the primary use case of this repository.
 5. [Legacy: packet_forwarder (LoRaWAN)](#5-legacy-packet_forwarder-lorawan)
 6. [Helper utilities](#6-helper-utilities)
 7. [Hardware](#7-hardware)
+   * [7.1. Tested hardware](#71-tested-hardware)
 8. [Build, install and run](#8-build-install-and-run)
 9. [Continuous integration & releases](#9-continuous-integration--releases)
 10. [Third party libraries](#10-third-party-libraries)
@@ -173,6 +174,16 @@ Supported regions/radio combinations ship as `global_conf.json.*` files at
 the root of [clusterduck](clusterduck) and [packet_forwarder](packet_forwarder):
 EU868, US915, AS923, CN490 (including a full-duplex CN490 variant), on both
 SPI and USB interfaces.
+
+### 7.1. Tested hardware
+
+MeshBeacon Uplink is currently tested on:
+
+* **Semtech Corecell evaluation board** (SX1302 concentrator reference design)
+* **Milesight UG56** gateway
+
+Other SX1302-based Corecell hardware should work but has not been
+specifically verified.
 
 ## 8. Build, install and run
 
