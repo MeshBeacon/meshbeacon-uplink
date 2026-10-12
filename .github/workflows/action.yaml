@@ -107,8 +107,59 @@ jobs:
           name: clusterduckd-linux-mipsel-24kec
           path: ${{ env.ARTIFACT_PATH }}
 
+  build-mips-24kc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Cross-compiled inside a Debian (bullseye) container, targeting the
+      # plain big-endian MIPS24Kc core (MIPS32r2), as used by Atheros
+      # AR71xx/AR9xxx router SoCs. Debian dropped the big-endian "mips"
+      # release architecture after bullseye, so this job pins to that
+      # release instead of bookworm (used by the other two jobs).
+      - name: Build clusterduckd for MIPS24Kc (Debian cross-compile)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            debian:bullseye \
+            bash -c "
+              set -euo pipefail
+              dpkg --add-architecture mips
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                crossbuild-essential-mips \
+                libusb-1.0-0-dev:mips \
+                libpaho-mqtt-dev:mips \
+                libprotobuf-dev:mips
+              make clusterduck ARCH=mips CROSS_COMPILE=mips-linux-gnu- \
+                CC='mips-linux-gnu-gcc -EB -mips32r2 -march=24kc -mtune=24kc' \
+                CXX='mips-linux-gnu-g++ -EB -mips32r2 -march=24kc -mtune=24kc'
+            "
+
+      - name: Fix file ownership
+        run: sudo chown -R "$(id -u)":"$(id -g)" .
+
+      - name: Verify binary architecture
+        run: file clusterduck/clusterduckd
+
+      - name: Package artifact
+        run: |
+          VERSION="${{ github.ref_name }}"
+          ARTIFACT="clusterduckd-${VERSION}-linux-mips-24kc"
+          mkdir -p dist
+          cp clusterduck/clusterduckd "dist/${ARTIFACT}"
+          echo "ARTIFACT_PATH=dist/${ARTIFACT}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clusterduckd-linux-mips-24kc
+          path: ${{ env.ARTIFACT_PATH }}
+
   release:
-    needs: [build-arm64, build-mips]
+    needs: [build-arm64, build-mips, build-mips-24kc]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts

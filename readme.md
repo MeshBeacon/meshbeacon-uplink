@@ -261,7 +261,7 @@ set, do:
 
 `make clean all`
 
-See [section 9](#9-continuous-integration--releases) for the arm64/mipsel
+See [section 9](#9-continuous-integration--releases) for the arm64/mipsel/mips
 cross-compile invocations used in CI, which can be reproduced locally.
 
 ### 8.4. USB
@@ -282,14 +282,18 @@ file (`com_type` / `com_path`).
 ## 9. Continuous integration & releases
 
 Pushing a `v*` tag triggers [.github/workflows/action.yaml](.github/workflows/action.yaml),
-which cross-compiles `clusterduckd` for two deployment targets inside
-`debian:bookworm` containers:
+which cross-compiles `clusterduckd` for three deployment targets:
 
-* **linux-arm64** (`aarch64-linux-gnu-`) — e.g. Raspberry Pi 64-bit hosts.
-* **linux-mipsel-24kec** (`mipsel-linux-gnu-`, MIPS32r2/24KEc) — common
-  router SoCs.
+* **linux-arm64** (`aarch64-linux-gnu-`, `debian:bookworm`) — e.g. Raspberry
+  Pi 64-bit hosts.
+* **linux-mipsel-24kec** (`mipsel-linux-gnu-`, MIPS32r2/24KEc,
+  `debian:bookworm`) — common little-endian router SoCs.
+* **linux-mips-24kc** (`mips-linux-gnu-`, MIPS32r2/24Kc, `debian:bullseye`)
+  — big-endian router SoCs such as Atheros AR71xx/AR9xxx. `debian:bullseye`
+  is used here because Debian dropped the big-endian `mips` architecture
+  after that release.
 
-Both jobs install `libusb-1.0`, `libpaho-mqtt` and `libprotobuf` for the
+All three jobs install `libusb-1.0`, `libpaho-mqtt` and `libprotobuf` for the
 target architecture, build with `make clusterduck`, and upload the resulting
 `clusterduckd-<version>-<target>` binaries as release artifacts on a GitHub
 Release created for the tag.
