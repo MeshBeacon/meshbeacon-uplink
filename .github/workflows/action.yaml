@@ -118,10 +118,15 @@ jobs:
       # AR71xx/AR9xxx router SoCs. Debian dropped the big-endian "mips"
       # release architecture starting with bullseye (only mipsel/mips64el
       # remained), so this job pins to buster, the last release that still
-      # has a binary-mips package pool. Buster is long EOL and has been
-      # pulled from deb.debian.org, so the apt sources are repointed at
-      # archive.debian.org and the Release valid-until check is disabled
-      # (the archived Release file is not refreshed).
+      # has a binary-mips package pool. Buster is long EOL and
+      # archive.debian.org's "buster" suite (the final accumulated 10.13
+      # state) has a broken mips dependency graph - several -dev packages
+      # (libusb-1.0-0-dev, libprotobuf-dev, libssl-dev) point at sibling
+      # runtime library versions that were never actually rebuilt for mips
+      # in later point releases. So apt is instead pointed at a
+      # snapshot.debian.org timestamp shortly after the original buster
+      # release, which is a self-consistent index+pool where every
+      # architecture (including mips) was still fully in sync.
       #
       # Debian never shipped libpaho-mqtt-dev for big-endian mips either:
       # paho.mqtt.c only entered the archive in 2020/2021 (bullseye), by
@@ -141,8 +146,7 @@ jobs:
             bash -c "
               set -euo pipefail
               printf '%s\n' \
-                'deb http://archive.debian.org/debian buster main' \
-                'deb http://archive.debian.org/debian-security buster/updates main' \
+                'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20190801T025637Z/ buster main' \
                 > /etc/apt/sources.list
               echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99no-check-valid-until
               dpkg --add-architecture mips
