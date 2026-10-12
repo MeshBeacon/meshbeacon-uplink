@@ -57,7 +57,7 @@ jobs:
           name: clusterduckd-linux-arm64
           path: ${{ env.ARTIFACT_PATH }}
 
-  build-mips:
+  build-mips-24kec:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -117,7 +117,11 @@ jobs:
       # plain big-endian MIPS24Kc core (MIPS32r2), as used by Atheros
       # AR71xx/AR9xxx router SoCs. Debian dropped the big-endian "mips"
       # release architecture after bullseye, so this job pins to that
-      # release instead of bookworm (used by the other two jobs).
+      # release instead of bookworm (used by the other two jobs). Bullseye
+      # is now EOL and has been pulled from deb.debian.org, so the apt
+      # sources are repointed at archive.debian.org and the Release
+      # valid-until check is disabled (the archived Release file is not
+      # refreshed).
       - name: Build clusterduckd for MIPS24Kc (Debian cross-compile)
         run: |
           docker run --rm \
@@ -126,6 +130,11 @@ jobs:
             debian:bullseye \
             bash -c "
               set -euo pipefail
+              cat > /etc/apt/sources.list <<'EOF'
+          deb http://archive.debian.org/debian bullseye main
+          deb http://archive.debian.org/debian-security bullseye-security main
+          EOF
+              echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99no-check-valid-until
               dpkg --add-architecture mips
               apt-get update
               apt-get install -y --no-install-recommends \
@@ -159,7 +168,7 @@ jobs:
           path: ${{ env.ARTIFACT_PATH }}
 
   release:
-    needs: [build-arm64, build-mips, build-mips-24kc]
+    needs: [build-arm64, build-mips-24kec, build-mips-24kc]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
