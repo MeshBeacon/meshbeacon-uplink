@@ -128,6 +128,15 @@ jobs:
       # release, which is a self-consistent index+pool where every
       # architecture (including mips) was still fully in sync.
       #
+      # The base image is pinned to the dated debian:buster-20190708 tag
+      # (rather than the generic debian:buster tag, which resolves to the
+      # final 10.13 state) so its pre-installed package versions predate
+      # the chosen snapshot. Otherwise apt has to reconcile newer
+      # already-installed base packages against the older snapshot index,
+      # which it resolves by silently dropping unrelated packages from the
+      # transaction (seen as collateral "Depends: X but it is not going to
+      # be installed" errors for packages with no real version conflict).
+      #
       # Debian never shipped libpaho-mqtt-dev for big-endian mips either:
       # paho.mqtt.c only entered the archive in 2020/2021 (bullseye), by
       # which point plain mips had already been dropped as a release
@@ -142,7 +151,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            debian:buster \
+            debian:buster-20190708 \
             bash -c "
               set -euo pipefail
               printf '%s\n' \
