@@ -122,6 +122,16 @@ jobs:
       # pulled from deb.debian.org, so the apt sources are repointed at
       # archive.debian.org and the Release valid-until check is disabled
       # (the archived Release file is not refreshed).
+      #
+      # Debian never shipped libpaho-mqtt-dev for big-endian mips either:
+      # paho.mqtt.c only entered the archive in 2020/2021 (bullseye), by
+      # which point plain mips had already been dropped as a release
+      # architecture. So it's cross-built from source here into the cross
+      # sysroot (/usr/mips-linux-gnu) instead of being installed via apt.
+      # Built with SSL enabled (matching the Debian package used by the
+      # other two jobs, which provides both libpaho-mqtt3c and
+      # libpaho-mqtt3cs) even though clusterduckd currently only links
+      # the non-SSL libpaho-mqtt3c.
       - name: Build clusterduckd for MIPS24Kc (Debian cross-compile)
         run: |
           docker run --rm \
@@ -140,8 +150,26 @@ jobs:
               apt-get install -y --no-install-recommends \
                 crossbuild-essential-mips \
                 libusb-1.0-0-dev:mips \
-                libpaho-mqtt-dev:mips \
-                libprotobuf-dev:mips
+                libprotobuf-dev:mips \
+                libssl-dev:mips \
+                cmake git ca-certificates
+              git clone --depth 1 --branch v1.3.13 \
+                https://github.com/eclipse/paho.mqtt.c.git /tmp/paho.mqtt.c
+              cmake -S /tmp/paho.mqtt.c -B /tmp/paho-build \
+                -DCMAKE_SYSTEM_NAME=Linux \
+                -DCMAKE_SYSTEM_PROCESSOR=mips \
+                -DCMAKE_C_COMPILER=mips-linux-gnu-gcc \
+                -DCMAKE_C_FLAGS='-EB -mips32r2 -march=24kc -mtune=24kc' \
+                -DCMAKE_INSTALL_PREFIX=/usr/mips-linux-gnu \
+                -DPAHO_WITH_SSL=TRUE \
+                -DOPENSSL_ROOT_DIR=/usr/lib/mips-linux-gnu \
+                -DOPENSSL_INCLUDE_DIR=/usr/include/mips-linux-gnu \
+                -DOPENSSL_SSL_LIBRARY=/usr/lib/mips-linux-gnu/libssl.so \
+                -DOPENSSL_CRYPTO_LIBRARY=/usr/lib/mips-linux-gnu/libcrypto.so \
+                -DPAHO_BUILD_SAMPLES=FALSE \
+                -DPAHO_ENABLE_TESTING=FALSE \
+                -DPAHO_ENABLE_CPACK=FALSE
+              cmake --build /tmp/paho-build --target install -- -j\$(nproc)
               make clusterduck ARCH=mips CROSS_COMPILE=mips-linux-gnu- \
                 CC='mips-linux-gnu-gcc -EB -mips32r2 -march=24kc -mtune=24kc' \
                 CXX='mips-linux-gnu-g++ -EB -mips32r2 -march=24kc -mtune=24kc'

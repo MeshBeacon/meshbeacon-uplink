@@ -292,10 +292,14 @@ which cross-compiles `clusterduckd` for three deployment targets:
   — big-endian router SoCs such as Atheros AR71xx/AR9xxx. `debian:buster`
   is used here because Debian dropped the big-endian `mips` architecture
   starting with bullseye; buster is the last release with a binary-mips
-  package pool.
+  package pool. Debian never packaged `libpaho-mqtt-dev` for big-endian
+  mips either (it entered the archive after that), so this job
+  cross-builds Paho MQTT C from source into the cross sysroot instead of
+  installing it via apt.
 
-All three jobs install `libusb-1.0`, `libpaho-mqtt` and `libprotobuf` for the
-target architecture, build with `make clusterduck`, and upload the resulting
+All three jobs install `libusb-1.0` and `libprotobuf` for the target
+architecture (plus `libpaho-mqtt` via apt where available), build with
+`make clusterduck`, and upload the resulting
 `clusterduckd-<version>-<target>` binaries as release artifacts on a GitHub
 Release created for the tag.
 
