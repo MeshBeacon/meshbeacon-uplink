@@ -288,10 +288,11 @@ which cross-compiles `clusterduckd` for three deployment targets:
   Pi 64-bit hosts.
 * **linux-mipsel-24kec** (`mipsel-linux-gnu-`, MIPS32r2/24KEc,
   `debian:bookworm`) — common little-endian router SoCs.
-* **linux-mips-24kc** (`mips-linux-gnu-`, MIPS32r2/24Kc, `debian:bullseye`)
-  — big-endian router SoCs such as Atheros AR71xx/AR9xxx. `debian:bullseye`
+* **linux-mips-24kc** (`mips-linux-gnu-`, MIPS32r2/24Kc, `debian:buster`)
+  — big-endian router SoCs such as Atheros AR71xx/AR9xxx. `debian:buster`
   is used here because Debian dropped the big-endian `mips` architecture
-  after that release.
+  starting with bullseye; buster is the last release with a binary-mips
+  package pool.
 
 All three jobs install `libusb-1.0`, `libpaho-mqtt` and `libprotobuf` for the
 target architecture, build with `make clusterduck`, and upload the resulting
