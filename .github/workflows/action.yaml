@@ -130,10 +130,10 @@ jobs:
             debian:bullseye \
             bash -c "
               set -euo pipefail
-              cat > /etc/apt/sources.list <<'EOF'
-          deb http://archive.debian.org/debian bullseye main
-          deb http://archive.debian.org/debian-security bullseye-security main
-          EOF
+              printf '%s\n' \
+                'deb http://archive.debian.org/debian bullseye main' \
+                'deb http://archive.debian.org/debian-security bullseye-security main' \
+                > /etc/apt/sources.list
               echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99no-check-valid-until
               dpkg --add-architecture mips
               apt-get update
