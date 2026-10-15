@@ -1184,7 +1184,7 @@ int lgw_connect(const lgw_com_type_t com_type, const char * com_path) {
     /* check SX1302 version */
     com_stat = lgw_com_r(LGW_SPI_MUX_TARGET_SX1302, loregs[SX1302_REG_COMMON_VERSION_VERSION].addr, &u);
     if (com_stat != LGW_COM_SUCCESS) {
-        DEBUG_MSG("ERROR READING CHIP VERSION REGISTER\n");
+        fprintf(stderr, "ERROR: failed to read chip version register over %s\n", (com_type == LGW_COM_SPI) ? "SPI" : "USB");
         return LGW_REG_ERROR;
     }
     printf("Note: chip version is 0x%02X (v%u.%u)\n", u, (u >> 4) & 0x0F, u & 0x0F) ;

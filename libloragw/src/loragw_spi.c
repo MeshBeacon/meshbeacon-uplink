@@ -25,6 +25,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #include <unistd.h>     /* lseek, close */
 #include <fcntl.h>      /* open */
 #include <string.h>     /* memset */
+#include <errno.h>      /* errno */
 
 #include <sys/ioctl.h>
 #include <linux/spi/spidev.h>
@@ -78,7 +79,8 @@ int lgw_spi_open(const char * com_path, void **com_target_ptr) {
     /* open SPI device */
     dev = open(com_path, O_RDWR);
     if (dev < 0) {
-        DEBUG_PRINTF("ERROR: failed to open SPI device %s\n", com_path);
+        fprintf(stderr, "ERROR: failed to open SPI device %s (errno %d: %s)\n", com_path, errno, strerror(errno));
+        free(spi_device);
         return LGW_SPI_ERROR;
     }
 
@@ -87,7 +89,7 @@ int lgw_spi_open(const char * com_path, void **com_target_ptr) {
     a = ioctl(dev, SPI_IOC_WR_MODE, &i);
     b = ioctl(dev, SPI_IOC_RD_MODE, &i);
     if ((a < 0) || (b < 0)) {
-        DEBUG_MSG("ERROR: SPI PORT FAIL TO SET IN MODE 0\n");
+        fprintf(stderr, "ERROR: SPI PORT FAIL TO SET IN MODE 0 on %s (errno %d: %s)\n", com_path, errno, strerror(errno));
         close(dev);
         free(spi_device);
         return LGW_SPI_ERROR;
@@ -98,7 +100,7 @@ int lgw_spi_open(const char * com_path, void **com_target_ptr) {
     a = ioctl(dev, SPI_IOC_WR_MAX_SPEED_HZ, &i);
     b = ioctl(dev, SPI_IOC_RD_MAX_SPEED_HZ, &i);
     if ((a < 0) || (b < 0)) {
-        DEBUG_MSG("ERROR: SPI PORT FAIL TO SET MAX SPEED\n");
+        fprintf(stderr, "ERROR: SPI PORT FAIL TO SET MAX SPEED on %s (errno %d: %s)\n", com_path, errno, strerror(errno));
         close(dev);
         free(spi_device);
         return LGW_SPI_ERROR;
@@ -109,7 +111,7 @@ int lgw_spi_open(const char * com_path, void **com_target_ptr) {
     a = ioctl(dev, SPI_IOC_WR_LSB_FIRST, &i);
     b = ioctl(dev, SPI_IOC_RD_LSB_FIRST, &i);
     if ((a < 0) || (b < 0)) {
-        DEBUG_MSG("ERROR: SPI PORT FAIL TO SET MSB FIRST\n");
+        fprintf(stderr, "ERROR: SPI PORT FAIL TO SET MSB FIRST on %s (errno %d: %s)\n", com_path, errno, strerror(errno));
         close(dev);
         free(spi_device);
         return LGW_SPI_ERROR;
@@ -120,8 +122,9 @@ int lgw_spi_open(const char * com_path, void **com_target_ptr) {
     a = ioctl(dev, SPI_IOC_WR_BITS_PER_WORD, &i);
     b = ioctl(dev, SPI_IOC_RD_BITS_PER_WORD, &i);
     if ((a < 0) || (b < 0)) {
-        DEBUG_MSG("ERROR: SPI PORT FAIL TO SET 8 BITS-PER-WORD\n");
+        fprintf(stderr, "ERROR: SPI PORT FAIL TO SET 8 BITS-PER-WORD on %s (errno %d: %s)\n", com_path, errno, strerror(errno));
         close(dev);
+        free(spi_device);
         return LGW_SPI_ERROR;
     }
 
@@ -189,7 +192,7 @@ int lgw_spi_w(void *com_target, uint8_t spi_mux_target, uint16_t address, uint8_
 
     /* determine return code */
     if (a != (int)k.len) {
-        DEBUG_MSG("ERROR: SPI WRITE FAILURE\n");
+        fprintf(stderr, "ERROR: SPI WRITE FAILURE (ioctl returned %d, expected %d, errno %d: %s)\n", a, (int)k.len, errno, strerror(errno));
         return LGW_SPI_ERROR;
     } else {
         DEBUG_MSG("Note: SPI write success\n");
@@ -202,10 +205,10 @@ int lgw_spi_w(void *com_target, uint8_t spi_mux_target, uint16_t address, uint8_
 /* Simple read */
 int lgw_spi_r(void *com_target, uint8_t spi_mux_target, uint16_t address, uint8_t *data) {
     int spi_device;
-    uint8_t out_buf[5];
+    uint8_t out_buf[4];
     uint8_t command_size;
-    uint8_t in_buf[ARRAY_SIZE(out_buf)];
-    struct spi_ioc_transfer k;
+    uint8_t in_buf[1];
+    struct spi_ioc_transfer k[2];
     int a;
 
     /* check input variables */
@@ -219,24 +222,30 @@ int lgw_spi_r(void *com_target, uint8_t spi_mux_target, uint16_t address, uint8_
     out_buf[1] = READ_ACCESS | ((address >> 8) & 0x7F);
     out_buf[2] =               ((address >> 0) & 0xFF);
     out_buf[3] = 0x00;
-    out_buf[4] = 0x00;
-    command_size = 5;
+    command_size = 4;
 
-    /* I/O transaction */
+    /* I/O transaction: split into a tx-only command phase and a rx-only data
+     * phase instead of a single full-duplex transfer (tx_buf + rx_buf set on
+     * the same spi_ioc_transfer). Some SPI masters (e.g. the MT7621/MT7628
+     * controller) do not support combined tx+rx in one transfer and return
+     * EINVAL; the burst read/write functions below already use this two-phase
+     * form, so mirror it here. */
     memset(&k, 0, sizeof(k)); /* clear k */
-    k.tx_buf = (unsigned long) out_buf;
-    k.rx_buf = (unsigned long) in_buf;
-    k.len = command_size;
-    k.cs_change = 0;
-    a = ioctl(spi_device, SPI_IOC_MESSAGE(1), &k);
+    k[0].tx_buf = (unsigned long) out_buf;
+    k[0].len = command_size;
+    k[0].cs_change = 0;
+    k[1].rx_buf = (unsigned long) in_buf;
+    k[1].len = sizeof(in_buf);
+    k[1].cs_change = 0;
+    a = ioctl(spi_device, SPI_IOC_MESSAGE(2), &k);
 
     /* determine return code */
-    if (a != (int)k.len) {
-        DEBUG_MSG("ERROR: SPI READ FAILURE\n");
+    if (a != (int)(k[0].len + k[1].len)) {
+        fprintf(stderr, "ERROR: SPI READ FAILURE (ioctl returned %d, expected %d, errno %d: %s)\n", a, (int)(k[0].len + k[1].len), errno, strerror(errno));
         return LGW_SPI_ERROR;
     } else {
         DEBUG_MSG("Note: SPI read success\n");
-        *data = in_buf[command_size - 1];
+        *data = in_buf[0];
         return LGW_SPI_SUCCESS;
     }
 }

@@ -18,6 +18,7 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 
 #include <stdint.h>     /* C99 types */
 #include <stdio.h>      /* printf fprintf */
+#include <string.h>     /* strerror */
 #include <unistd.h>     /* lseek, close */
 #include <fcntl.h>      /* open */
 #include <errno.h>      /* errno */
@@ -65,7 +66,7 @@ int i2c_linuxdev_open(const char *path, uint8_t device_addr, int *i2c_fd) {
     /* Open I2C device */
     dev = open(path, O_RDWR);
     if (dev < 0) {
-        DEBUG_PRINTF("ERROR: Failed to open I2C %s - %s\n", path, strerror(errno));
+        fprintf(stderr, "ERROR: Failed to open I2C %s (errno %d: %s)\n", path, errno, strerror(errno));
         return LGW_I2C_ERROR;
     }
 

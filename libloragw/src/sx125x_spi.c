@@ -62,9 +62,8 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 int sx125x_spi_r(void *com_target, uint8_t spi_mux_target, uint8_t address, uint8_t *data) {
     int com_device;
     uint8_t out_buf[3];
-    uint8_t command_size;
-    uint8_t in_buf[ARRAY_SIZE(out_buf)];
-    struct spi_ioc_transfer k;
+    uint8_t in_buf[1];
+    struct spi_ioc_transfer k[2];
     int a;
 
     /* check input variables */
@@ -77,23 +76,28 @@ int sx125x_spi_r(void *com_target, uint8_t spi_mux_target, uint8_t address, uint
     out_buf[0] = spi_mux_target;
     out_buf[1] = READ_ACCESS | (address & 0x7F);
     out_buf[2] = 0x00;
-    command_size = 3;
 
-    /* I/O transaction */
+    /* I/O transaction: split into a tx-only command phase and a rx-only data
+     * phase instead of a single full-duplex transfer (tx_buf + rx_buf set on
+     * the same spi_ioc_transfer). Some SPI masters (e.g. the MT7621/MT7628
+     * controller) do not support combined tx+rx in one transfer and return
+     * EINVAL. */
     memset(&k, 0, sizeof(k)); /* clear k */
-    k.tx_buf = (unsigned long) out_buf;
-    k.rx_buf = (unsigned long) in_buf;
-    k.len = command_size;
-    k.cs_change = 0;
-    a = ioctl(com_device, SPI_IOC_MESSAGE(1), &k);
+    k[0].tx_buf = (unsigned long) out_buf;
+    k[0].len = sizeof(out_buf);
+    k[0].cs_change = 0;
+    k[1].rx_buf = (unsigned long) in_buf;
+    k[1].len = sizeof(in_buf);
+    k[1].cs_change = 0;
+    a = ioctl(com_device, SPI_IOC_MESSAGE(2), &k);
 
     /* determine return code */
-    if (a != (int)k.len) {
+    if (a != (int)(k[0].len + k[1].len)) {
         DEBUG_MSG("ERROR: SPI READ FAILURE\n");
         return LGW_SPI_ERROR;
     } else {
         //DEBUG_MSG("Note: SPI read success\n");
-        *data = in_buf[command_size - 1];
+        *data = in_buf[0];
         return LGW_SPI_SUCCESS;
     }
 }

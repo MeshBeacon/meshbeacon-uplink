@@ -26,6 +26,26 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 #define _GNU_SOURCE     /* needed for qsort_r to be defined */
 #include <stdlib.h>     /* qsort_r */
 
+#if !defined(__GLIBC__)
+/* musl (as shipped by, e.g., OpenWrt's 21.02 toolchains) does not provide the
+ * GNU qsort_r(3) extension. Provide a drop-in fallback built on plain
+ * qsort(3); this is only ever invoked from a single call site (below) that is
+ * not re-entered concurrently, so a static trampoline context is safe. */
+static void *qsort_r_fallback_arg;
+static int (*qsort_r_fallback_compar)(const void *, const void *, void *);
+
+static int qsort_r_fallback_trampoline(const void *a, const void *b) {
+    return qsort_r_fallback_compar(a, b, qsort_r_fallback_arg);
+}
+
+static void qsort_r(void *base, size_t nmemb, size_t size,
+                     int (*compar)(const void *, const void *, void *), void *arg) {
+    qsort_r_fallback_compar = compar;
+    qsort_r_fallback_arg = arg;
+    qsort(base, nmemb, size, qsort_r_fallback_trampoline);
+}
+#endif
+
 #include <stdint.h>     /* C99 types */
 #include <stdbool.h>    /* bool type */
 #include <stdio.h>      /* printf fprintf */
@@ -1103,8 +1123,14 @@ int lgw_start(void) {
             ts_addr = I2C_PORT_TEMP_SENSOR[i];
             err = i2c_linuxdev_open(I2C_DEVICE, ts_addr, &ts_fd);
             if (err != LGW_I2C_SUCCESS) {
-                printf("ERROR: failed to open I2C for temperature sensor on port 0x%02X\n", ts_addr);
-                return LGW_HAL_ERROR;
+                /* Some boards (e.g. non-reference SPI designs) don't expose
+                 * the I2C bus used by the reference design at all (missing
+                 * /dev device node, bus not wired up, etc). Treat this the
+                 * same as "sensor not found" below instead of aborting
+                 * concentrator startup. */
+                printf("INFO: failed to open I2C bus %s for temperature sensor on port 0x%02X\n", I2C_DEVICE, ts_addr);
+                ts_fd = -1;
+                continue;
             }
 
             err = stts751_configure(ts_fd, ts_addr);
