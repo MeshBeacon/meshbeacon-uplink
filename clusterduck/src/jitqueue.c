@@ -17,6 +17,27 @@ License: Revised BSD License, see LICENSE.TXT file include in the project
 
 #define _GNU_SOURCE     /* needed for qsort_r to be defined */
 #include <stdlib.h>     /* qsort_r */
+
+#if !defined(__GLIBC__)
+/* musl (as shipped by, e.g., OpenWrt's 21.02 toolchains) does not provide the
+ * GNU qsort_r(3) extension. Provide a drop-in fallback built on plain
+ * qsort(3); this is only ever invoked from a single call site (below) that is
+ * not re-entered concurrently, so a static trampoline context is safe. */
+static void *qsort_r_fallback_arg;
+static int (*qsort_r_fallback_compar)(const void *, const void *, void *);
+
+static int qsort_r_fallback_trampoline(const void *a, const void *b) {
+    return qsort_r_fallback_compar(a, b, qsort_r_fallback_arg);
+}
+
+static void qsort_r(void *base, size_t nmemb, size_t size,
+                     int (*compar)(const void *, const void *, void *), void *arg) {
+    qsort_r_fallback_compar = compar;
+    qsort_r_fallback_arg = arg;
+    qsort(base, nmemb, size, qsort_r_fallback_trampoline);
+}
+#endif
+
 #include <stdio.h>      /* printf, fprintf, snprintf, fopen, fputs */
 #include <string.h>     /* memset, memcpy */
 #include <pthread.h>
