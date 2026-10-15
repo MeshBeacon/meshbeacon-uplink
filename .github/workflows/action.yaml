@@ -63,35 +63,103 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Cross-compiled inside a Debian (bookworm) container, targeting the
-      # MIPS24KEc core (little-endian mipsel, MIPS32r2) used by common
-      # router SoCs. Plain big-endian "mips" was dropped as a Debian
-      # release architecture after bullseye, so mipsel is used instead.
-      - name: Build clusterduckd for MIPS24KEc (Debian cross-compile)
+      # The MT7628AN (and other mt76x8-family 24KEc SoCs) used by real
+      # OpenWrt ramips/mt76x8 hardware have no hardware FPU, and this
+      # target's kernel has no FPU emulator either (confirmed: no
+      # FPU-emulation option enabled in the real device's kernel config) -
+      # so the binary must contain *zero* hardware floating point (COP1)
+      # instructions, or it SIGILLs on real hardware. Debian's
+      # crossbuild-essential-mipsel is hard-float-only - it ships no
+      # soft-float glibc variant at all (no gnu/stubs-o32_soft.h anywhere in
+      # the package, confirmed by direct inspection) - so no combination of
+      # compiler flags on that toolchain can ever produce a working binary
+      # for this target.
+      #
+      # Instead, this job downloads OpenWrt's own official SDK toolchain for
+      # ramips/mt76x8 (musl libc; -msoft-float and -mno-dsp are both its
+      # compiled-in defaults, exactly matching the real device's kernel/ABI,
+      # confirmed via `-Q --help=target`) and cross-builds clusterduckd's
+      # two real link dependencies (paho-mqtt-c, protobuf) from source
+      # against it, since no prebuilt musl/soft-float packages for them
+      # exist anywhere. No container is needed since the toolchain is a
+      # self-contained set of static-ish binaries that run directly on the
+      # runner. (libusb-1.0 is intentionally not built here - it's never
+      # actually called by this codebase; device I/O goes through a plain
+      # tty, not libusb.)
+      - name: Download OpenWrt SDK toolchain for ramips/mt76x8
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            debian:bookworm \
-            bash -c "
-              set -euo pipefail
-              dpkg --add-architecture mipsel
-              apt-get update
-              apt-get install -y --no-install-recommends \
-                crossbuild-essential-mipsel \
-                libusb-1.0-0-dev:mipsel \
-                libpaho-mqtt-dev:mipsel \
-                libprotobuf-dev:mipsel
-              make clusterduck ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- \
-                CC='mipsel-linux-gnu-gcc -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp -msoft-float' \
-                CXX='mipsel-linux-gnu-g++ -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp -msoft-float'
-            "
+          mkdir -p /tmp/openwrt-sdk
+          curl -sL https://downloads.openwrt.org/releases/21.02.3/targets/ramips/mt76x8/openwrt-sdk-21.02.3-ramips-mt76x8_gcc-8.4.0_musl.Linux-x86_64.tar.xz \
+            | tar -xJ -C /tmp/openwrt-sdk --wildcards '*/staging_dir/toolchain-mipsel_24kc_gcc-8.4.0_musl/*'
+          TOOLCHAIN_BIN="$(find /tmp/openwrt-sdk -maxdepth 4 -type d -path '*/toolchain-mipsel_24kc_gcc-8.4.0_musl/bin')"
+          echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
+          echo "SYSROOT=/tmp/duck-sysroot" >> "$GITHUB_ENV"
 
-      - name: Fix file ownership
-        run: sudo chown -R "$(id -u)":"$(id -g)" .
+      # musl libc in this toolchain predates musl 1.2.0 and lacks the GNU
+      # qsort_r(3) extension that libloragw's packet-sort code and
+      # clusterduck's jitqueue.c both rely on - this is patched directly in
+      # the vendored sources (loragw_hal.c / jitqueue.c) with a portable
+      # fallback shim guarded by `#if !defined(__GLIBC__)`, so it's a no-op
+      # on the glibc-based arm64/mips24kc jobs.
+      - name: Cross-build paho-mqtt-c (musl, soft-float, no SSL)
+        run: |
+          mkdir -p "$SYSROOT"
+          git clone --depth 1 --branch v1.3.13 \
+            https://github.com/eclipse/paho.mqtt.c.git /tmp/paho.mqtt.c
+          cmake -S /tmp/paho.mqtt.c -B /tmp/paho-build \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=mips \
+            -DCMAKE_C_COMPILER=mipsel-openwrt-linux-gcc \
+            -DCMAKE_INSTALL_PREFIX="$SYSROOT/usr" \
+            -DPAHO_WITH_SSL=FALSE \
+            -DPAHO_BUILD_STATIC=TRUE \
+            -DPAHO_BUILD_SHARED=FALSE \
+            -DPAHO_BUILD_SAMPLES=FALSE \
+            -DPAHO_ENABLE_TESTING=FALSE \
+            -DPAHO_ENABLE_CPACK=FALSE
+          cmake --build /tmp/paho-build --target install -- -j"$(nproc)"
 
-      - name: Verify binary architecture
-        run: file clusterduck/clusterduckd
+      - name: Cross-build protobuf runtime (musl, soft-float)
+        run: |
+          git clone --depth 1 --branch v21.12 \
+            https://github.com/protocolbuffers/protobuf.git /tmp/protobuf
+          cmake -S /tmp/protobuf -B /tmp/protobuf-build \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=mips \
+            -DCMAKE_CXX_COMPILER=mipsel-openwrt-linux-g++ \
+            -DCMAKE_INSTALL_PREFIX="$SYSROOT/usr" \
+            -Dprotobuf_BUILD_TESTS=OFF \
+            -Dprotobuf_BUILD_PROTOC_BINARIES=OFF \
+            -Dprotobuf_BUILD_LIBPROTOC=OFF \
+            -Dprotobuf_BUILD_SHARED_LIBS=OFF \
+            -Dprotobuf_WITH_ZLIB=OFF
+          cmake --build /tmp/protobuf-build --target install -- -j"$(nproc)"
+
+      # -lgcc_eh/-lgcc must be added explicitly: this toolchain's g++ spec
+      # does not auto-append them when LIBS is overridden on a -static link,
+      # which otherwise fails with dozens of undefined `_Unwind_*` reference
+      # errors from the statically-linked libstdc++. They're wrapped in
+      # --start-group/--end-group alongside the rest of LIBS so the linker
+      # re-scans archives until all circular references resolve.
+      - name: Build clusterduckd for MIPS24KEc (OpenWrt musl toolchain)
+        run: |
+          make clusterduck ARCH=mips CROSS_COMPILE=mipsel-openwrt-linux- \
+            CC="mipsel-openwrt-linux-gcc -march=24kc -mtune=24kc -I$SYSROOT/usr/include -L$SYSROOT/usr/lib" \
+            CXX="mipsel-openwrt-linux-g++ -march=24kc -mtune=24kc -I$SYSROOT/usr/include -L$SYSROOT/usr/lib" \
+            LIBS='-Wl,--start-group -lloragw -ltinymt32 -lparson -lbase64 -lrt -lpthread -lm -lpaho-mqtt3c -lprotobuf -latomic -lgcc_eh -lgcc -Wl,--end-group'
+
+      - name: Verify binary architecture and instruction set
+        run: |
+          file clusterduck/clusterduckd
+          OBJDUMP="$(dirname "$(command -v mipsel-openwrt-linux-gcc)")/mipsel-openwrt-linux-objdump"
+          COP1_COUNT="$("$OBJDUMP" -d clusterduck/clusterduckd | grep -cE '\b(lwc1|swc1|ldc1|sdc1|mfc1|mtc1|cfc1|ctc1)\b')"
+          DSP_COUNT="$("$OBJDUMP" -d clusterduck/clusterduckd | grep -cE '\b(lwx|lhx|lbux|lwxs|lhxs|ldx)\b')"
+          echo "COP1 (hardware FPU) instructions found: $COP1_COUNT"
+          echo "DSP ASE instructions found: $DSP_COUNT"
+          if [ "$COP1_COUNT" -ne 0 ] || [ "$DSP_COUNT" -ne 0 ]; then
+            echo "::error::Binary contains hardware FPU and/or DSP instructions - will SIGILL on real MT7628AN hardware"
+            exit 1
+          fi
 
       - name: Package artifact
         run: |
@@ -201,7 +269,7 @@ jobs:
                 -DCMAKE_SYSTEM_NAME=Linux \
                 -DCMAKE_SYSTEM_PROCESSOR=mips \
                 -DCMAKE_C_COMPILER=mips-linux-gnu-gcc \
-                -DCMAKE_C_FLAGS='-EB -mips32r2 -march=24kc -mtune=24kc -msoft-float' \
+                -DCMAKE_C_FLAGS='-EB -mips32r2 -march=24kc -mtune=24kc' \
                 -DCMAKE_INSTALL_PREFIX=/usr/mips-linux-gnu \
                 -DPAHO_WITH_SSL=TRUE \
                 -DOPENSSL_ROOT_DIR=/usr/lib/mips-linux-gnu \
