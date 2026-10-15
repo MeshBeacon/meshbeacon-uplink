@@ -83,8 +83,8 @@ jobs:
                 libpaho-mqtt-dev:mipsel \
                 libprotobuf-dev:mipsel
               make clusterduck ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- \
-                CC='mipsel-linux-gnu-gcc -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp' \
-                CXX='mipsel-linux-gnu-g++ -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp'
+                CC='mipsel-linux-gnu-gcc -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp -msoft-float' \
+                CXX='mipsel-linux-gnu-g++ -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp -msoft-float'
             "
 
       - name: Fix file ownership
@@ -201,7 +201,7 @@ jobs:
                 -DCMAKE_SYSTEM_NAME=Linux \
                 -DCMAKE_SYSTEM_PROCESSOR=mips \
                 -DCMAKE_C_COMPILER=mips-linux-gnu-gcc \
-                -DCMAKE_C_FLAGS='-EB -mips32r2 -march=24kc -mtune=24kc' \
+                -DCMAKE_C_FLAGS='-EB -mips32r2 -march=24kc -mtune=24kc -msoft-float' \
                 -DCMAKE_INSTALL_PREFIX=/usr/mips-linux-gnu \
                 -DPAHO_WITH_SSL=TRUE \
                 -DOPENSSL_ROOT_DIR=/usr/lib/mips-linux-gnu \
