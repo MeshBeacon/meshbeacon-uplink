@@ -83,8 +83,8 @@ jobs:
                 libpaho-mqtt-dev:mipsel \
                 libprotobuf-dev:mipsel
               make clusterduck ARCH=mips CROSS_COMPILE=mipsel-linux-gnu- \
-                CC='mipsel-linux-gnu-gcc -EL -mips32r2 -march=24kec -mtune=24kec' \
-                CXX='mipsel-linux-gnu-g++ -EL -mips32r2 -march=24kec -mtune=24kec'
+                CC='mipsel-linux-gnu-gcc -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp' \
+                CXX='mipsel-linux-gnu-g++ -EL -mips32r2 -march=24kec -mtune=24kec -mno-dsp'
             "
 
       - name: Fix file ownership
