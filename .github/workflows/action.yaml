@@ -162,8 +162,8 @@ jobs:
         run: |
           file clusterduck/clusterduckd
           OBJDUMP="$(dirname "$(command -v mipsel-openwrt-linux-gcc)")/mipsel-openwrt-linux-objdump"
-          COP1_COUNT="$("$OBJDUMP" -d clusterduck/clusterduckd | grep -cE '\b(lwc1|swc1|ldc1|sdc1|mfc1|mtc1|cfc1|ctc1)\b')"
-          DSP_COUNT="$("$OBJDUMP" -d clusterduck/clusterduckd | grep -cE '\b(lwx|lhx|lbux|lwxs|lhxs|ldx)\b')"
+          COP1_COUNT="$("$OBJDUMP" -d clusterduck/clusterduckd | grep -cE '\b(lwc1|swc1|ldc1|sdc1|mfc1|mtc1|cfc1|ctc1)\b' || true)"
+          DSP_COUNT="$("$OBJDUMP" -d clusterduck/clusterduckd | grep -cE '\b(lwx|lhx|lbux|lwxs|lhxs|ldx)\b' || true)"
           echo "COP1 (hardware FPU) instructions found: $COP1_COUNT"
           echo "DSP ASE instructions found: $DSP_COUNT"
           if [ "$COP1_COUNT" -ne 0 ] || [ "$DSP_COUNT" -ne 0 ]; then
