@@ -86,11 +86,21 @@ jobs:
       # runner. (libusb-1.0 is intentionally not built here - it's never
       # actually called by this codebase; device I/O goes through a plain
       # tty, not libusb.)
+      # The toolchain's gcc/g++ are not real ELF binaries but wrapper
+      # scripts that `exec` the real compiler via an explicit, relative
+      # dynamic loader path (`../../host/lib/ld-linux-x86-64.so.2`, plus an
+      # `LD_PRELOAD=.../host/lib/runas.so`) - OpenWrt bundles its own
+      # host-side loader/libs rather than relying on the runner's glibc. So
+      # `staging_dir/host/` must be extracted alongside
+      # `staging_dir/toolchain-.../`, or the wrapper fails with "No such
+      # file or directory" trying to exec a loader that was never unpacked.
       - name: Download OpenWrt SDK toolchain for ramips/mt76x8
         run: |
           mkdir -p /tmp/openwrt-sdk
           curl -sL https://downloads.openwrt.org/releases/21.02.3/targets/ramips/mt76x8/openwrt-sdk-21.02.3-ramips-mt76x8_gcc-8.4.0_musl.Linux-x86_64.tar.xz \
-            | tar -xJ -C /tmp/openwrt-sdk --wildcards '*/staging_dir/toolchain-mipsel_24kc_gcc-8.4.0_musl/*'
+            | tar -xJ -C /tmp/openwrt-sdk --wildcards \
+              '*/staging_dir/toolchain-mipsel_24kc_gcc-8.4.0_musl/*' \
+              '*/staging_dir/host/*'
           TOOLCHAIN_BIN="$(find /tmp/openwrt-sdk -maxdepth 4 -type d -path '*/toolchain-mipsel_24kc_gcc-8.4.0_musl/bin')"
           echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
           echo "SYSROOT=/tmp/duck-sysroot" >> "$GITHUB_ENV"
